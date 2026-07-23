@@ -338,18 +338,23 @@ class PIIMiddleware(AgentMiddleware):
         """Scrub PII from the model request and restore it in the response (async)."""
         from langchain.agents.middleware.types import ModelResponse
 
-        thread_id = self._setup_scrub()
+        from deep_agent.aegra.otel import get_tracer
 
-        scrubbed_messages: list[AnyMessage] = [
-            self._scrub_message(m) for m in request.messages
-        ]
-        scrubbed_system = self._scrub_system(request.system_message)
+        tracer = get_tracer()
+        with tracer.start_as_current_span("pii.scrub") as span:
+            thread_id = self._setup_scrub()
 
-        # Snapshot NOW — before the async handler crosses any context boundary.
-        # self._scrubber.restore() reads a ContextVar which may be empty after
-        # await; the snapshot dict is a plain local variable, always available.
-        token_map = self._scrubber.snapshot_token_map()
-        self._teardown_scrub(thread_id)
+            scrubbed_messages: list[AnyMessage] = [
+                self._scrub_message(m) for m in request.messages
+            ]
+            scrubbed_system = self._scrub_system(request.system_message)
+
+            token_map = self._scrubber.snapshot_token_map()
+            self._teardown_scrub(thread_id)
+
+            span.set_attribute("pii.message_count", len(scrubbed_messages))
+            span.set_attribute("pii.token_count", len(token_map))
+            span.set_attribute("pii.has_system_message", scrubbed_system is not None)
 
         overrides: dict[str, Any] = {"messages": scrubbed_messages}
         if scrubbed_system is not None:

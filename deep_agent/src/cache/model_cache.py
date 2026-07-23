@@ -118,6 +118,7 @@ def get_or_create_model_from_spec(
     Returns:
         A ``BaseChatModel`` instance.
     """
+    from deep_agent.aegra.otel import get_tracer
     from deep_agent.src.agent.provider_factory import create_model_from_spec
     from deep_agent.src.settings import settings
 
@@ -125,9 +126,14 @@ def get_or_create_model_from_spec(
     cache_id = model_spec_cache_key(spec)
 
     if not cache_settings.is_enabled("model"):
-        return create_model_from_spec(
-            spec, temperature=temperature, max_output_tokens=tokens
-        )
+        tracer = get_tracer()
+        with tracer.start_as_current_span("model.create") as span:
+            span.set_attribute("model.provider", spec.provider.value)
+            span.set_attribute("model.name", spec.name)
+            span.set_attribute("model.cache_hit", False)
+            return create_model_from_spec(
+                spec, temperature=temperature, max_output_tokens=tokens
+            )
 
     key: _SpecCacheKey = (cache_id, temperature, tokens)
 
@@ -141,9 +147,15 @@ def get_or_create_model_from_spec(
 
     metrics.record_miss("model")
     logger.debug("Model cache MISS: %s — creating", cache_id)
-    model = create_model_from_spec(
-        spec, temperature=temperature, max_output_tokens=tokens
-    )
+
+    tracer = get_tracer()
+    with tracer.start_as_current_span("model.create") as span:
+        span.set_attribute("model.provider", spec.provider.value)
+        span.set_attribute("model.name", spec.name)
+        span.set_attribute("model.cache_hit", False)
+        model = create_model_from_spec(
+            spec, temperature=temperature, max_output_tokens=tokens
+        )
 
     with _lock:
         cache = _get_spec_cache()

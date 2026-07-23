@@ -409,22 +409,28 @@ async def _connect_single_server(
         required: If True the server is explicitly enabled in config,
             so connection failures are logged at error level.
     """
+    from deep_agent.aegra.otel import get_tracer
+
     breaker = _get_mcp_breaker()
     if breaker.is_open:
         logger.warning(f"[{name}] circuit breaker open — skipping connection")
         return []
 
+    tracer = get_tracer()
     max_attempts = 2
     for attempt in range(1, max_attempts + 1):
         try:
-            async with asyncio.timeout(timeout):
-                client = MultiServerMCPClient(
-                    {name: config},
-                    tool_interceptors=[
-                        _TokenInjectorInterceptor(name, server_cfg),
-                    ],
-                )
-                tools: list[Any] = await client.get_tools()
+            with tracer.start_as_current_span("mcp.server_connect") as span:
+                span.set_attribute("mcp.server_name", name)
+                async with asyncio.timeout(timeout):
+                    client = MultiServerMCPClient(
+                        {name: config},
+                        tool_interceptors=[
+                            _TokenInjectorInterceptor(name, server_cfg),
+                        ],
+                    )
+                    tools: list[Any] = await client.get_tools()
+                span.set_attribute("mcp.tool_count", len(tools))
             logger.info(f"[{name}] loaded {len(tools)} tool(s)")
             breaker.record_success()
             return tools

@@ -163,3 +163,11 @@ def version() -> dict[str, str]:
     from deep_agent.aegra import __version__
 
     return {"service": "template-agent", "version": __version__}
+
+
+@app.get("/metrics")
+def metrics() -> dict:
+    """Return current OTEL metric values."""
+    from deep_agent.aegra.otel import get_metrics_snapshot
+
+    return get_metrics_snapshot()

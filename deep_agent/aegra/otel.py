@@ -213,6 +213,13 @@ class MetricsContainer:
         self.threads_deleted_total.add(0)
         self.thread_messages_count.record(0)
 
+        self.llm_time_to_first_token_seconds = meter.create_histogram(
+            name=f"{self._prefix}_llm_time_to_first_token_seconds",
+            description="LLM provider latency until first token (excludes graph overhead)",
+            unit="s",
+        )
+        self.llm_time_to_first_token_seconds.record(0)
+
         # Graph build metric
         self.graph_build_duration_seconds = meter.create_histogram(
             name=f"{self._prefix}_graph_build_duration_seconds",
@@ -419,6 +426,10 @@ def _create_histogram_views(prefix: Optional[str] = None) -> list[View]:
         View(
             instrument_name=f"{prefix}_graph_build_duration_seconds",
             aggregation=ExplicitBucketHistogramAggregation(boundaries=DURATION_BUCKETS),
+        ),
+        View(
+            instrument_name=f"{prefix}_llm_time_to_first_token_seconds",
+            aggregation=ExplicitBucketHistogramAggregation(boundaries=TTFT_BUCKETS),
         ),
     ]
 
@@ -853,3 +864,15 @@ def record_graph_built(
             **_attrs(attributes),
         }
         m.graph_build_duration_seconds.record(duration, merged)
+
+
+def record_llm_first_token(
+    llm_start_mono: float,
+    *,
+    attributes: Optional[dict[str, Any]] = None,
+) -> None:
+    """Record LLM provider time-to-first-token (excludes graph overhead)."""
+    m = get_metrics()
+    if m:
+        ttft = time.monotonic() - llm_start_mono
+        m.llm_time_to_first_token_seconds.record(ttft, _attrs(attributes))

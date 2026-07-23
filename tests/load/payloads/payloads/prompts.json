@@ -1,0 +1,20 @@
+{
+  "short": [
+    "What is a Python decorator and when should I use one?",
+    "Explain the difference between a list and a tuple in Python.",
+    "What does HTTP status code 429 mean?",
+    "How do I reverse a string in Go?"
+  ],
+  "medium": [
+    "Describe the key differences between SQL and NoSQL databases. When would you choose one over the other for a new microservice that handles user session data?",
+    "Explain how connection pooling works in PostgreSQL. What are the main configuration parameters I should tune for a web application serving around 500 concurrent users?",
+    "What are the trade-offs between using REST and gRPC for internal service-to-service communication in a Kubernetes cluster? Consider latency, tooling, and developer experience.",
+    "Walk me through the process of setting up structured logging in a Python FastAPI application using structlog. What fields should every log entry include?"
+  ],
+  "long": [
+    "I am designing a data pipeline that ingests CSV files from an S3 bucket, validates the schema, transforms the data using business rules, and loads it into a PostgreSQL database. The pipeline needs to handle files up to 2GB, support incremental loads, and provide detailed error reporting for malformed rows. Outline the architecture and key components I should implement.",
+    "We need to implement a rate limiting strategy for our public API. The API serves both free-tier users with 100 requests per minute and enterprise users with 10000 requests per minute. We want to use a sliding window algorithm backed by Redis. Describe the implementation approach including the Redis data structures, the middleware design, and how to handle edge cases like clock skew across multiple API gateway replicas.",
+    "Our team is migrating a monolithic Django application to a microservices architecture using FastAPI and Kubernetes. The monolith currently handles user authentication, order processing, inventory management, and notification delivery. Propose a phased migration strategy that minimizes downtime, describe how to handle cross-service transactions, and explain what observability tooling we should put in place from day one.",
+    "Design a CI/CD pipeline for a Python data science project that includes model training, evaluation, and deployment. The pipeline should run automated tests on feature branches, train models on merge to main using GPU-enabled runners, compare model metrics against the current production baseline, and deploy to a staging environment for human review before promoting to production. Include rollback procedures and model versioning strategy."
+  ]
+}

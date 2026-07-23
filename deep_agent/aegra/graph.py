@@ -40,6 +40,11 @@ from typing import Any
 
 from langgraph_sdk.runtime import ServerRuntime
 
+from deep_agent.aegra.otel import (
+    get_tracer,
+    record_conversation_started,
+    record_graph_built,
+)
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
@@ -87,10 +92,15 @@ async def _ensure_startup() -> None:  # noqa: E402
     global _startup_done  # noqa: PLW0603
     if _startup_done:
         return
+
+    from deep_agent.aegra.otel import get_tracer
     from deep_agent.aegra.startup import run_startup
 
-    await run_startup()
-    _startup_done = True
+    tracer = get_tracer()
+    with tracer.start_as_current_span("startup.cold") as span:
+        span.set_attribute("startup.first_request", True)
+        await run_startup()
+        _startup_done = True
 
 
 async def agent(runtime: ServerRuntime) -> Any:
@@ -109,6 +119,9 @@ async def agent(runtime: ServerRuntime) -> Any:
     Returns:
         A compiled deep-agent graph (``CompiledStateGraph``).
     """
+    build_start = time.monotonic()
+    record_conversation_started()
+
     await _ensure_startup()
 
     from deepagents import create_deep_agent
@@ -127,232 +140,266 @@ async def agent(runtime: ServerRuntime) -> Any:
     )
     from deep_agent.src.infrastructure.subagents import load_subagents
 
-    user = getattr(runtime, "user", None)
-    sso_token = getattr(user, "access_token", None) if user else None
-    refresh_token = getattr(user, "refresh_token", None) if user else None
+    tracer = get_tracer()
 
-    if sso_token:
-        sso_token = await refresh_access_token(sso_token, refresh_token)
+    with tracer.start_as_current_span("graph.build") as build_span:
+        user = getattr(runtime, "user", None)
+        sso_token = getattr(user, "access_token", None) if user else None
+        refresh_token = getattr(user, "refresh_token", None) if user else None
 
-    user_identity = getattr(user, "identity", None) if user else None
+        if sso_token:
+            with tracer.start_as_current_span("auth.token_refresh") as auth_span:
+                sso_token = await refresh_access_token(sso_token, refresh_token)
+                auth_span.set_attribute("auth.token_present", bool(sso_token))
 
-    set_mcp_auth_context(sso_token, refresh_token, user_identity)
-    orchestrator_cfg = agent_config.get_orchestrator_config()
-    agent_name = orchestrator_cfg.get("name", "orchestrator")
-    orch_model_raw = orchestrator_cfg.get("model", "gemini-3.1-pro-preview")
-    system_prompt = orchestrator_cfg.get("body", "")
-    skill_paths = orchestrator_cfg.get("skill_paths", [])
-    tool_names = orchestrator_cfg.get("tools", [])
-    mcp_server_names = orchestrator_cfg.get("mcps", [])
+        user_identity = getattr(user, "identity", None) if user else None
 
-    if user_identity:
-        try:
-            from deep_agent.src.cache.personalization_cache import (
-                get_personalization,
-                set_personalization,
-            )
-            from deep_agent.src.memory.config import memory_settings
-            from deep_agent.src.personalization.injector import inject_personalization
-            from deep_agent.src.personalization.repository import (
-                PersonalizationRepository,
-            )
-            from deep_agent.src.settings import settings as app_settings
+        set_mcp_auth_context(sso_token, refresh_token, user_identity)
+        orchestrator_cfg = agent_config.get_orchestrator_config()
+        agent_name = orchestrator_cfg.get("name", "orchestrator")
+        orch_model_raw = orchestrator_cfg.get("model", "gemini-3.1-pro-preview")
+        system_prompt = orchestrator_cfg.get("body", "")
+        skill_paths = orchestrator_cfg.get("skill_paths", [])
+        tool_names = orchestrator_cfg.get("tools", [])
+        mcp_server_names = orchestrator_cfg.get("mcps", [])
 
-            cached = await get_personalization(user_identity)
-            if cached is not None:
-                mem_contents = [m["content"] for m in cached[0]]
-                rule_contents = [r["content"] for r in cached[1]]
-            else:
-                repo = PersonalizationRepository(app_settings.database_uri)
-                max_inject = memory_settings.MEMORY_MAX_INJECT
-                memories = await repo.list_top_memories(user_identity, limit=max_inject)
-                rules = await repo.list_rules(user_identity, active_only=True)
-                mem_contents = [m.content for m in memories]
-                rule_contents = [r.content for r in rules]
-                await set_personalization(
-                    user_identity,
-                    [{"content": m.content} for m in memories],
-                    [{"content": r.content} for r in rules],
-                )
+        build_span.set_attribute("agent.name", agent_name)
+        build_span.set_attribute("agent.model", orch_model_raw)
+        build_span.set_attribute("agent.has_user", user_identity is not None)
 
-            system_prompt = inject_personalization(
-                system_prompt,
-                mem_contents,
-                rule_contents,
-            )
-            if mem_contents or rule_contents:
-                logger.info(
-                    "Personalization injected: %d memories, %d rules",
-                    len(mem_contents),
-                    len(rule_contents),
-                )
-        except Exception:
-            logger.debug(
-                "Personalization unavailable, continuing without", exc_info=True
-            )
+        if user_identity:
+            with tracer.start_as_current_span("graph.personalization") as pz_span:
+                try:
+                    from deep_agent.src.cache.personalization_cache import (
+                        get_personalization,
+                        set_personalization,
+                    )
+                    from deep_agent.src.memory.config import memory_settings
+                    from deep_agent.src.personalization.injector import (
+                        inject_personalization,
+                    )
+                    from deep_agent.src.personalization.repository import (
+                        PersonalizationRepository,
+                    )
+                    from deep_agent.src.settings import settings as app_settings
 
-    # Parse orchestrator model to support provider
-    from deep_agent.src.agent.config.model import parse_model_config
-    from deep_agent.src.cache.model_cache import get_or_create_model_from_spec
+                    cached = await get_personalization(user_identity)
+                    if cached is not None:
+                        pz_span.set_attribute("personalization.cache_hit", True)
+                        mem_contents = [m["content"] for m in cached[0]]
+                        rule_contents = [r["content"] for r in cached[1]]
+                    else:
+                        pz_span.set_attribute("personalization.cache_hit", False)
+                        repo = PersonalizationRepository(app_settings.database_uri)
+                        max_inject = memory_settings.MEMORY_MAX_INJECT
+                        memories = await repo.list_top_memories(
+                            user_identity, limit=max_inject
+                        )
+                        rules = await repo.list_rules(user_identity, active_only=True)
+                        mem_contents = [m.content for m in memories]
+                        rule_contents = [r.content for r in rules]
+                        await set_personalization(
+                            user_identity,
+                            [{"content": m.content} for m in memories],
+                            [{"content": r.content} for r in rules],
+                        )
 
-    orch_spec = parse_model_config(orch_model_raw)
-    model_name = orch_spec.name  # For logging and cache key
+                    system_prompt = inject_personalization(
+                        system_prompt,
+                        mem_contents,
+                        rule_contents,
+                    )
+                    pz_span.set_attribute(
+                        "personalization.memory_count", len(mem_contents)
+                    )
+                    pz_span.set_attribute(
+                        "personalization.rule_count", len(rule_contents)
+                    )
+                    if mem_contents or rule_contents:
+                        logger.info(
+                            "Personalization injected: %d memories, %d rules",
+                            len(mem_contents),
+                            len(rule_contents),
+                        )
+                except Exception:
+                    pz_span.set_attribute("personalization.error", True)
+                    logger.debug(
+                        "Personalization unavailable, continuing without", exc_info=True
+                    )
 
-    logger.info(
-        "Building agent '%s' (model=%s, provider=%s, mcp_auth=%s)",
-        agent_name,
-        orch_spec.name,
-        orch_spec.provider.value,
-        bool(sso_token),
-    )
+        from deep_agent.src.agent.config.model import parse_model_config
+        from deep_agent.src.cache.model_cache import get_or_create_model_from_spec
 
-    model = get_or_create_model_from_spec(orch_spec)
+        orch_spec = parse_model_config(orch_model_raw)
+        model_name = orch_spec.name
 
-    providers_config = agent_config.get_providers_config()
-    register_profiles_from_config(providers_config)
+        build_span.set_attribute("agent.model_resolved", model_name)
+        build_span.set_attribute("agent.provider", orch_spec.provider.value)
 
-    mcp_tools = await get_mcp_tools(
-        sso_token=sso_token,
-        server_names=mcp_server_names or None,
-        user_id=user_identity,
-    )
-    mcp_tools = wrap_mcp_tools_for_auth(mcp_tools)
-
-    from deep_agent.src.triggers.tools import get_builtin_tools
-
-    all_available_tools = list(mcp_tools) + get_builtin_tools()
-    tools = agent_config.resolve_tools(
-        tool_names, all_available_tools, agent_name=agent_name
-    )
-    if not tools and not tool_names and mcp_server_names and mcp_tools:
         logger.info(
-            "Agent '%s' declared MCP servers %s but no explicit tools; exposing all %d MCP tool(s)",
+            "Building agent '%s' (model=%s, provider=%s, mcp_auth=%s)",
             agent_name,
-            mcp_server_names,
-            len(mcp_tools),
+            orch_spec.name,
+            orch_spec.provider.value,
+            bool(sso_token),
         )
-        tools = mcp_tools
 
-    from deep_agent.src.infrastructure.middleware import (
-        build_middleware_list,
-        resolve_memory_param,
-    )
+        model = get_or_create_model_from_spec(orch_spec)
 
-    middleware_overrides = orchestrator_cfg.get("middleware")
-    resolved_mw = agent_config.resolve_agent_middleware(
-        model_name, middleware_overrides
-    )
+        providers_config = agent_config.get_providers_config()
+        register_profiles_from_config(providers_config)
 
-    hitl = getattr(resolved_mw, "human_approval", None)
-    cache_key = _graph_fingerprint(
-        model_name,
-        system_prompt,
-        [t.name for t in tools],
-        hitl_enabled=hitl.enabled if hitl else False,
-        hitl_mode=hitl.mode if hitl else "",
-        hitl_exclude=hitl.exclude if hitl else [],
-    )
-    now = time.time()
-    graph_ttl = float(agent_config.get_cache_config().graph.ttl)
-    cached = _graph_cache.get(cache_key)
-    if cached is not None and (now - _graph_cache_ts.get(cache_key, 0)) < graph_ttl:
-        age = now - _graph_cache_ts[cache_key]
-        logger.warning("Graph cache HIT (age=%.1fs) — skipping rebuild", age)
-        return cached
-
-    logger.warning("Graph cache MISS — full rebuild")
-
-    subagents = load_subagents(tools=mcp_tools)
-    backend = get_configured_backend()
-
-    middleware_overrides = orchestrator_cfg.get("middleware")
-    resolved_mw = agent_config.resolve_agent_middleware(
-        model_name, middleware_overrides
-    )
-    middleware = build_middleware_list(
-        resolved_mw,
-        model=model,
-        backend=backend,
-        mcp_tool_names=frozenset(t.name for t in mcp_tools),
-    )
-    memory = resolve_memory_param(resolved_mw)
-    if skill_paths and resolved_mw.skills_enabled:
-        from deep_agent.src.agent.config.resolver import to_virtual_skill_paths
-
-        skills_param = to_virtual_skill_paths(skill_paths)
-    else:
-        skills_param = None
-
-    async_mw = build_async_middleware(subagents, providers_config.async_tasks)
-    if async_mw is not None:
-        middleware.append(async_mw)
-
-    create_kwargs: dict[str, Any] = {
-        "name": agent_name,
-        "model": model,
-        "system_prompt": system_prompt,
-        "skills": skills_param,
-        "tools": tools,
-        "subagents": subagents,
-        "backend": backend,
-        "middleware": middleware,
-        "memory": memory,
-    }
-
-    import inspect
-
-    create_sig = inspect.signature(create_deep_agent)
-    if "permissions" in create_sig.parameters:
-        try:
-            from deep_agent.src.infrastructure.permissions import build_permissions
-
-            permissions = build_permissions(agent_config.get_filesystem_config())
-            if permissions:
-                create_kwargs["permissions"] = permissions
-        except (ImportError, TypeError):
-            pass
-
-    if hitl and hitl.enabled and "interrupt_on" in create_sig.parameters:
-        try:
-            from deep_agent.src.agent.config.hitl import build_interrupt_on
-
-            interrupt_on = build_interrupt_on(hitl, tools)
-            if interrupt_on:
-                create_kwargs["interrupt_on"] = interrupt_on
-            else:
-                logger.warning(
-                    "HITL is enabled but interrupt_on is empty — "
-                    "no tool calls will be interrupted (all tools may be excluded)"
-                )
-        except ImportError:
-            logger.warning(
-                "HITL is enabled but hitl module not available — "
-                "upgrade deepagents to activate human-in-the-loop approval"
+        with tracer.start_as_current_span("graph.mcp_tools") as mcp_span:
+            mcp_tools = await get_mcp_tools(
+                sso_token=sso_token,
+                server_names=mcp_server_names or None,
+                user_id=user_identity,
             )
+            mcp_tools = wrap_mcp_tools_for_auth(mcp_tools)
+            mcp_span.set_attribute("mcp.tool_count", len(mcp_tools))
+            mcp_span.set_attribute("mcp.server_count", len(mcp_server_names))
 
-    _inner_graph = create_deep_agent(**create_kwargs)
+        from deep_agent.src.triggers.tools import get_builtin_tools
 
-    from deep_agent.src.pii import get_scrubber
+        all_available_tools = list(mcp_tools) + get_builtin_tools()
+        tools = agent_config.resolve_tools(
+            tool_names, all_available_tools, agent_name=agent_name
+        )
+        if not tools and not tool_names and mcp_server_names and mcp_tools:
+            logger.info(
+                "Agent '%s' declared MCP servers %s but no explicit tools; exposing all %d MCP tool(s)",
+                agent_name,
+                mcp_server_names,
+                len(mcp_tools),
+            )
+            tools = mcp_tools
 
-    if get_scrubber() is not None:
-        from deep_agent.src.pii.runnable import PIIAwareRunnable
+        build_span.set_attribute("agent.tool_count", len(tools))
 
-        compiled = PIIAwareRunnable(_inner_graph)
-        logger.info("graph_pii_enabled: wrapped with PIIAwareRunnable")
-    else:
-        compiled = _inner_graph
+        from deep_agent.src.infrastructure.middleware import (
+            build_middleware_list,
+            resolve_memory_param,
+        )
 
-    _graph_cache[cache_key] = compiled
-    _graph_cache_ts[cache_key] = time.time()
+        middleware_overrides = orchestrator_cfg.get("middleware")
+        resolved_mw = agent_config.resolve_agent_middleware(
+            model_name, middleware_overrides
+        )
 
-    tool_count = len(tools)
-    sub_count = len(subagents) if subagents else 0
-    logger.info(
-        "Agent ready: %d tool(s), %d subagent(s), %d middleware, mcp_auth=%s",
-        tool_count,
-        sub_count,
-        len(middleware),
-        bool(sso_token),
-    )
+        hitl = getattr(resolved_mw, "human_approval", None)
+        cache_key = _graph_fingerprint(
+            model_name,
+            system_prompt,
+            [t.name for t in tools],
+            hitl_enabled=hitl.enabled if hitl else False,
+            hitl_mode=hitl.mode if hitl else "",
+            hitl_exclude=hitl.exclude if hitl else [],
+        )
+        now = time.time()
+        graph_ttl = float(agent_config.get_cache_config().graph.ttl)
+        cached = _graph_cache.get(cache_key)
+        if cached is not None and (now - _graph_cache_ts.get(cache_key, 0)) < graph_ttl:
+            age = now - _graph_cache_ts[cache_key]
+            build_span.set_attribute("graph.cache_hit", True)
+            logger.warning("Graph cache HIT (age=%.1fs) — skipping rebuild", age)
+            record_graph_built(build_start, cache_hit=True, mcp_tool_count=0)
+            return cached
 
-    return compiled
+        build_span.set_attribute("graph.cache_hit", False)
+        logger.warning("Graph cache MISS — full rebuild")
+
+        subagents = load_subagents(tools=mcp_tools)
+        backend = get_configured_backend()
+
+        middleware_overrides = orchestrator_cfg.get("middleware")
+        resolved_mw = agent_config.resolve_agent_middleware(
+            model_name, middleware_overrides
+        )
+        middleware = build_middleware_list(
+            resolved_mw,
+            model=model,
+            backend=backend,
+            mcp_tool_names=frozenset(t.name for t in mcp_tools),
+        )
+        memory = resolve_memory_param(resolved_mw)
+        if skill_paths and resolved_mw.skills_enabled:
+            from deep_agent.src.agent.config.resolver import to_virtual_skill_paths
+
+            skills_param = to_virtual_skill_paths(skill_paths)
+        else:
+            skills_param = None
+
+        async_mw = build_async_middleware(subagents, providers_config.async_tasks)
+        if async_mw is not None:
+            middleware.append(async_mw)
+
+        create_kwargs: dict[str, Any] = {
+            "name": agent_name,
+            "model": model,
+            "system_prompt": system_prompt,
+            "skills": skills_param,
+            "tools": tools,
+            "subagents": subagents,
+            "backend": backend,
+            "middleware": middleware,
+            "memory": memory,
+        }
+
+        import inspect
+
+        create_sig = inspect.signature(create_deep_agent)
+        if "permissions" in create_sig.parameters:
+            try:
+                from deep_agent.src.infrastructure.permissions import build_permissions
+
+                permissions = build_permissions(agent_config.get_filesystem_config())
+                if permissions:
+                    create_kwargs["permissions"] = permissions
+            except (ImportError, TypeError):
+                pass
+
+        if hitl and hitl.enabled and "interrupt_on" in create_sig.parameters:
+            try:
+                from deep_agent.src.agent.config.hitl import build_interrupt_on
+
+                interrupt_on = build_interrupt_on(hitl, tools)
+                if interrupt_on:
+                    create_kwargs["interrupt_on"] = interrupt_on
+                else:
+                    logger.warning(
+                        "HITL is enabled but interrupt_on is empty — "
+                        "no tool calls will be interrupted (all tools may be excluded)"
+                    )
+            except ImportError:
+                logger.warning(
+                    "HITL is enabled but hitl module not available — "
+                    "upgrade deepagents to activate human-in-the-loop approval"
+                )
+
+        _inner_graph = create_deep_agent(**create_kwargs)
+        record_graph_built(build_start, cache_hit=False, mcp_tool_count=len(mcp_tools))
+
+        from deep_agent.src.pii import get_scrubber
+
+        if get_scrubber() is not None:
+            from deep_agent.src.pii.runnable import PIIAwareRunnable
+
+            compiled = PIIAwareRunnable(_inner_graph)
+            logger.info("graph_pii_enabled: wrapped with PIIAwareRunnable")
+        else:
+            compiled = _inner_graph
+
+        _graph_cache[cache_key] = compiled
+        _graph_cache_ts[cache_key] = time.time()
+
+        tool_count = len(tools)
+        sub_count = len(subagents) if subagents else 0
+        logger.info(
+            "Agent ready: %d tool(s), %d subagent(s), %d middleware, mcp_auth=%s",
+            tool_count,
+            sub_count,
+            len(middleware),
+            bool(sso_token),
+        )
+
+        return compiled

@@ -89,16 +89,24 @@ class PersonalizationRepository:
 
     async def list_top_memories(self, user_id: str, limit: int = 20) -> list[Memory]:
         """Return top-N memories for *user_id*, ranked by score descending."""
-        await self.ensure_tables()
-        async with await psycopg.AsyncConnection.connect(
-            self._uri, row_factory=dict_row
-        ) as conn:
-            cur = await conn.execute(
-                "SELECT * FROM user_memories WHERE user_id = %s "
-                "ORDER BY score DESC, updated_at DESC LIMIT %s",
-                (user_id, limit),
-            )
-            return [Memory(**row) for row in await cur.fetchall()]
+        from deep_agent.aegra.otel import get_tracer
+
+        tracer = get_tracer()
+        with tracer.start_as_current_span("personalization.load") as span:
+            span.set_attribute("personalization.operation", "list_top_memories")
+            span.set_attribute("personalization.limit", limit)
+            await self.ensure_tables()
+            async with await psycopg.AsyncConnection.connect(
+                self._uri, row_factory=dict_row
+            ) as conn:
+                cur = await conn.execute(
+                    "SELECT * FROM user_memories WHERE user_id = %s "
+                    "ORDER BY score DESC, updated_at DESC LIMIT %s",
+                    (user_id, limit),
+                )
+                memories = [Memory(**row) for row in await cur.fetchall()]
+            span.set_attribute("personalization.memory_count", len(memories))
+            return memories
 
     async def create_memory(self, user_id: str, content: str) -> Memory:
         """Insert a new memory and return the created model."""
@@ -128,16 +136,24 @@ class PersonalizationRepository:
 
     async def list_rules(self, user_id: str, *, active_only: bool = True) -> list[Rule]:
         """Return rules for *user_id*, optionally filtering to active only."""
-        await self.ensure_tables()
-        clause = " AND is_active = TRUE" if active_only else ""
-        async with await psycopg.AsyncConnection.connect(
-            self._uri, row_factory=dict_row
-        ) as conn:
-            cur = await conn.execute(
-                f"SELECT * FROM user_rules WHERE user_id = %s{clause} ORDER BY created_at DESC",
-                (user_id,),
-            )
-            return [Rule(**row) for row in await cur.fetchall()]
+        from deep_agent.aegra.otel import get_tracer
+
+        tracer = get_tracer()
+        with tracer.start_as_current_span("personalization.load") as span:
+            span.set_attribute("personalization.operation", "list_rules")
+            span.set_attribute("personalization.active_only", active_only)
+            await self.ensure_tables()
+            clause = " AND is_active = TRUE" if active_only else ""
+            async with await psycopg.AsyncConnection.connect(
+                self._uri, row_factory=dict_row
+            ) as conn:
+                cur = await conn.execute(
+                    f"SELECT * FROM user_rules WHERE user_id = %s{clause} ORDER BY created_at DESC",
+                    (user_id,),
+                )
+                rules = [Rule(**row) for row in await cur.fetchall()]
+            span.set_attribute("personalization.rule_count", len(rules))
+            return rules
 
     async def upsert_rule(
         self,

@@ -10,6 +10,12 @@ from typing import Any
 from langchain_core.messages import AIMessage, AIMessageChunk
 from langgraph.types import Overwrite
 
+from deep_agent.aegra.otel import (
+    record_first_token,
+    record_stream_completed,
+    record_stream_error,
+    record_stream_started,
+)
 from deep_agent.src.adapters.langchain import (
     convert_message_content_to_string,
     langchain_to_chat_message,
@@ -168,6 +174,9 @@ class TokenEventHandler:
             tracker: Tool call tracker for associating tokens with tools.
         """
         self.tracker = tracker
+        self._stream_start_mono = record_stream_started()
+        self._first_token_recorded = False
+        self._token_count = 0
 
     def handle(self, event: tuple, ctx: StreamContext) -> list[dict[str, Any]]:
         """Process token streaming events.
@@ -193,6 +202,12 @@ class TokenEventHandler:
         if not content:
             return []
 
+        if not self._first_token_recorded:
+            record_first_token(self._stream_start_mono)
+            self._first_token_recorded = True
+
+        self._token_count += 1
+
         token_event = {
             "type": "token",
             "content": convert_message_content_to_string(content),
@@ -204,3 +219,11 @@ class TokenEventHandler:
             token_event["tool_call_id"] = tool_call_id
 
         return [token_event]
+
+    def finalize(self) -> None:
+        """Record stream completion metrics."""
+        record_stream_completed(self._stream_start_mono, self._token_count)
+
+    def on_error(self, error: Exception) -> None:
+        """Record stream error metrics."""
+        record_stream_error(error_type=type(error).__name__)

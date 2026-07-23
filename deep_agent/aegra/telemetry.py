@@ -28,6 +28,7 @@ logger = get_python_logger()
 
 _langfuse_tracing_initialized = False
 _token_budget_tracing_initialized = False
+_llm_latency_initialized = False
 _pii_initialized = False
 
 
@@ -192,6 +193,35 @@ def setup_langfuse_tracing() -> None:
         logger.warning(
             "Failed to register Langfuse observability provider", exc_info=True
         )
+
+
+def setup_llm_latency_tracking() -> None:
+    """Register LLM latency callback to measure LLM-only TTFT for all LangChain runs."""
+    global _llm_latency_initialized
+    if _llm_latency_initialized:
+        return
+    _llm_latency_initialized = True
+
+    try:
+        from langchain_core.tracers.context import register_configure_hook
+
+        from deep_agent.aegra.llm_latency import LLMLatencyCallbackHandler
+
+        _llm_latency_ctx_var: contextvars.ContextVar = contextvars.ContextVar(
+            "llm_latency_handler", default=None
+        )
+        os.environ.setdefault("LLM_LATENCY_TRACKING", "1")
+        register_configure_hook(
+            _llm_latency_ctx_var,
+            True,
+            LLMLatencyCallbackHandler,
+            env_var="LLM_LATENCY_TRACKING",
+        )
+        logger.info("LLM latency callback registered for all LangChain runs")
+    except ImportError:
+        logger.warning("langchain_core not available — LLM latency callback disabled")
+    except Exception:
+        logger.warning("Failed to register LLM latency callback", exc_info=True)
 
 
 class LangfuseObservabilityProvider:

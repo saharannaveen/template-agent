@@ -129,26 +129,51 @@ info "Generating baseline report..."
 
 METRICS_TABLE=$(python3 -c "
 import json
+
 pre = json.loads('''$PRE_METRICS''')
 post = json.loads('''$POST_METRICS''')
 
-print('| Metric | Before | After | Delta |')
-print('|--------|--------|-------|-------|')
+# Separate counters and histograms
+counters = []
+histograms = []
+
 for key in sorted(post.keys()):
     pv = pre.get(key, 0)
     av = post.get(key, 0)
+    short = key.replace('health_assistant_', '')
     if isinstance(av, dict):
-        pc = pv.get('count', 0) if isinstance(pv, dict) else 0
-        ps = pv.get('sum', 0) if isinstance(pv, dict) else 0
-        ac = av.get('count', 0)
-        asv = av.get('sum', 0)
-        delta_c = ac - pc
-        delta_s = round(asv - ps, 3)
-        avg = round(asv / ac, 3) if ac > 0 else 0
-        print(f'| \`{key}\` | count={pc}, sum={ps} | count={ac}, sum={round(asv,3)} | +{delta_c} calls, +{delta_s}s (avg {avg}s) |')
+        histograms.append((short, pv, av))
     else:
-        delta = av - pv
-        print(f'| \`{key}\` | {pv} | {av} | +{delta} |')
+        counters.append((short, pv, av))
+
+print('### Counters')
+print()
+print('| Metric | Before | After | Delta |')
+print('|--------|--------|-------|-------|')
+for short, pv, av in counters:
+    delta = av - pv
+    sign = '+' if delta >= 0 else ''
+    print(f'| \`{short}\` | {pv} | {av} | {sign}{delta} |')
+
+print()
+print('### Histograms (latency)')
+print()
+print('| Metric | Calls | Avg | Total | Delta (calls) |')
+print('|--------|-------|-----|-------|---------------|')
+for short, pv, av in histograms:
+    pc = pv.get('count', 0) if isinstance(pv, dict) else 0
+    ps = pv.get('sum', 0) if isinstance(pv, dict) else 0
+    ac = av.get('count', 0)
+    asv = av.get('sum', 0)
+    delta_c = ac - pc
+    delta_s = round(asv - ps, 3)
+    avg = f'{asv / ac:.3f}s' if ac > 0 else 'n/a'
+    delta_avg = ''
+    if delta_c > 0:
+        delta_avg = f'{delta_s / delta_c:.3f}s avg'
+    elif delta_c == 0:
+        delta_avg = 'no new calls'
+    print(f'| \`{short}\` | {ac} | {avg} | {round(asv, 3)}s | +{delta_c} ({delta_avg}) |')
 " 2>/dev/null || echo "Failed to generate metrics table")
 
 LOCUST_SUMMARY=""

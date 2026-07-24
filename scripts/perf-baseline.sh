@@ -4,18 +4,23 @@ set -euo pipefail
 AGENT_URL="${AGENT_BASE_URL:-http://localhost:5002}"
 JAEGER_URL="${JAEGER_URL:-http://localhost:16686}"
 REPORT_DIR="tests/load/reports"
+REFERENCE_FILE="$REPORT_DIR/baseline-reference.json"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 REPORT_FILE="$REPORT_DIR/baseline-$TIMESTAMP.md"
 CSV_PREFIX="$REPORT_DIR/locust-$TIMESTAMP"
 USERS="${PERF_USERS:-3}"
 DURATION="${PERF_DURATION:-90s}"
 SPAWN_RATE="${PERF_SPAWN_RATE:-1}"
+REGRESSION_THRESHOLD="${PERF_REGRESSION_THRESHOLD:-20}"
 
 mkdir -p "$REPORT_DIR"
 
 info()  { printf "\033[1;34m▸ %s\033[0m\n" "$1"; }
 ok()    { printf "\033[1;32m✓ %s\033[0m\n" "$1"; }
+warn()  { printf "\033[1;33m⚠ %s\033[0m\n" "$1"; }
 fail()  { printf "\033[1;31m✗ %s\033[0m\n" "$1"; }
+pass()  { printf "\033[1;32m  PASS  %s\033[0m\n" "$1"; }
+regr()  { printf "\033[1;31m  FAIL  %s\033[0m\n" "$1"; }
 
 # ── Prereq checks ────────────────────────────────────────────────
 
@@ -42,6 +47,12 @@ if ! command -v .venv/bin/locust > /dev/null 2>&1; then
   exit 1
 fi
 ok "Locust installed"
+
+if [ -f "$REFERENCE_FILE" ]; then
+  info "Reference baseline found — will compare for regressions (threshold: ${REGRESSION_THRESHOLD}%)"
+else
+  info "No reference baseline — this run will become the reference"
+fi
 
 # ── Capture pre-test metrics ─────────────────────────────────────
 
@@ -74,12 +85,13 @@ echo "$POST_METRICS" > "$REPORT_DIR/metrics-post-$TIMESTAMP.json"
 # ── Pull Jaeger traces ───────────────────────────────────────────
 
 JAEGER_SUMMARY=""
+JAEGER_JSON="{}"
 if [ "$JAEGER_UP" = true ]; then
   info "Pulling Jaeger traces..."
   JAEGER_RAW=$(curl -sf "$JAEGER_URL/api/traces?service=Health+Assistant&limit=100" 2>/dev/null || echo '{"data":[]}')
   echo "$JAEGER_RAW" > "$REPORT_DIR/jaeger-traces-$TIMESTAMP.json"
 
-  JAEGER_SUMMARY=$(echo "$JAEGER_RAW" | python3 -c "
+  JAEGER_JSON=$(echo "$JAEGER_RAW" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
 traces = data.get('data', [])
@@ -90,21 +102,41 @@ for t in traces:
         op = s['operationName']
         dur = s['duration'] / 1000
         if op not in span_stats:
-            span_stats[op] = {'count': 0, 'total': 0, 'min': float('inf'), 'max': 0}
+            span_stats[op] = {'count': 0, 'total': 0, 'min': float('inf'), 'max': 0, 'values': []}
         span_stats[op]['count'] += 1
         span_stats[op]['total'] += dur
         span_stats[op]['min'] = min(span_stats[op]['min'], dur)
         span_stats[op]['max'] = max(span_stats[op]['max'], dur)
+        span_stats[op]['values'].append(dur)
 
-print(f'Total traces: {len(traces)}')
+result = {}
+for op, s in span_stats.items():
+    vals = sorted(s['values'])
+    p50 = vals[len(vals)//2] if vals else 0
+    p95_idx = min(int(len(vals) * 0.95), len(vals)-1)
+    p95 = vals[p95_idx] if vals else 0
+    result[op] = {
+        'count': s['count'],
+        'avg': round(s['total'] / s['count'], 1),
+        'min': round(s['min'], 1) if s['min'] != float('inf') else 0,
+        'max': round(s['max'], 1),
+        'p50': round(p50, 1),
+        'p95': round(p95, 1),
+    }
+print(json.dumps({'trace_count': len(traces), 'spans': result}))
+" 2>/dev/null || echo '{}')
+
+  JAEGER_SUMMARY=$(echo "$JAEGER_JSON" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+spans = data.get('spans', {})
+print(f'Total traces: {data.get(\"trace_count\", 0)}')
 print()
-print(f'{\"Span\":45s} {\"Count\":>5s} {\"Avg(ms)\":>8s} {\"Min(ms)\":>8s} {\"Max(ms)\":>8s}')
-print('-' * 78)
-for op in sorted(span_stats, key=lambda x: -span_stats[x]['total']):
-    s = span_stats[op]
-    avg = s['total'] / s['count']
-    mn = s['min'] if s['min'] != float('inf') else 0
-    print(f'{op:45s} {s[\"count\"]:5d} {avg:8.1f} {mn:8.1f} {s[\"max\"]:8.1f}')
+print(f'{\"Span\":40s} {\"Count\":>5s} {\"Avg(ms)\":>8s} {\"p50(ms)\":>8s} {\"p95(ms)\":>8s} {\"Max(ms)\":>8s}')
+print('-' * 81)
+for op in sorted(spans, key=lambda x: -spans[x]['avg'] * spans[x]['count']):
+    s = spans[op]
+    print(f'{op:40s} {s[\"count\"]:5d} {s[\"avg\"]:8.1f} {s[\"p50\"]:8.1f} {s[\"p95\"]:8.1f} {s[\"max\"]:8.1f}')
 " 2>/dev/null || echo "Failed to parse Jaeger traces")
   ok "Jaeger traces captured"
 fi
@@ -123,9 +155,166 @@ else
   ERRORS=0
 fi
 
-# ── Generate report ──────────────────────────────────────────────
+# ── Build current snapshot for comparison ────────────────────────
 
-info "Generating baseline report..."
+CURRENT_SNAPSHOT=$(python3 -c "
+import json, sys
+
+post = json.loads('''$POST_METRICS''')
+pre = json.loads('''$PRE_METRICS''')
+jaeger = json.loads('''$JAEGER_JSON''')
+spans = jaeger.get('spans', {})
+
+snapshot = {
+    'timestamp': '$TIMESTAMP',
+    'users': $USERS,
+    'duration': '$DURATION',
+    'metrics': {},
+    'jaeger': {},
+    'locust': {},
+}
+
+for key, av in post.items():
+    pv = pre.get(key, 0)
+    short = key.replace('health_assistant_', '')
+    if isinstance(av, dict):
+        pc = pv.get('count', 0) if isinstance(pv, dict) else 0
+        ac = av.get('count', 0)
+        asv = av.get('sum', 0)
+        ps = pv.get('sum', 0) if isinstance(pv, dict) else 0
+        delta_c = ac - pc
+        delta_s = asv - ps
+        avg = delta_s / delta_c if delta_c > 0 else (asv / ac if ac > 0 else 0)
+        snapshot['metrics'][short] = {'calls': delta_c, 'avg': round(avg, 3), 'total': round(delta_s, 3)}
+    else:
+        snapshot['metrics'][short] = {'value': av - pv}
+
+for op, s in spans.items():
+    snapshot['jaeger'][op] = s
+
+print(json.dumps(snapshot, indent=2))
+" 2>/dev/null)
+
+echo "$CURRENT_SNAPSHOT" > "$REPORT_DIR/snapshot-$TIMESTAMP.json"
+
+# ── Compare against reference ────────────────────────────────────
+
+VERDICT=""
+COMPARISON=""
+REGRESSION_FOUND=false
+
+if [ -f "$REFERENCE_FILE" ]; then
+  info "Comparing against reference baseline..."
+
+  COMPARISON=$(python3 -c "
+import json, sys
+
+ref = json.load(open('$REFERENCE_FILE'))
+cur = json.loads('''$CURRENT_SNAPSHOT''')
+threshold = $REGRESSION_THRESHOLD
+
+lines = []
+regressions = []
+improvements = []
+stable = []
+
+key_metrics = [
+    ('graph_build_duration_seconds', 'Graph build', 'metrics'),
+    ('llm_time_to_first_token_seconds', 'LLM TTFT', 'metrics'),
+    ('conversation_duration_seconds', 'Conversation duration', 'metrics'),
+    ('stream_duration_seconds', 'Stream duration', 'metrics'),
+]
+
+key_spans = [
+    ('ChatGoogleGenerativeAI', 'Gemini LLM call'),
+    ('graph.build', 'Graph build'),
+    ('graph.personalization', 'Personalization'),
+    ('model.create', 'Model creation'),
+    ('graph.mcp_tools', 'MCP tools'),
+    ('personalization.load', 'DB: personalization'),
+    ('mcp.server_connect', 'MCP server connect'),
+    ('pii.scrub', 'PII scrubbing'),
+]
+
+lines.append('| Component | Reference | Current | Change | Verdict |')
+lines.append('|-----------|-----------|---------|--------|---------|')
+
+for metric_key, label, source in key_metrics:
+    ref_m = ref.get(source, {}).get(metric_key, {})
+    cur_m = cur.get(source, {}).get(metric_key, {})
+    ref_avg = ref_m.get('avg', 0)
+    cur_avg = cur_m.get('avg', 0)
+    if ref_avg > 0 and cur_avg > 0:
+        pct = ((cur_avg - ref_avg) / ref_avg) * 100
+        if pct > threshold:
+            verdict = f'🔴 +{pct:.0f}% REGRESSION'
+            regressions.append(f'{label}: {ref_avg:.3f}s → {cur_avg:.3f}s (+{pct:.0f}%)')
+        elif pct < -threshold:
+            verdict = f'🟢 {pct:.0f}% IMPROVED'
+            improvements.append(f'{label}: {ref_avg:.3f}s → {cur_avg:.3f}s ({pct:.0f}%)')
+        else:
+            verdict = f'⚪ {pct:+.0f}% stable'
+            stable.append(label)
+        lines.append(f'| {label} (OTEL) | {ref_avg:.3f}s | {cur_avg:.3f}s | {pct:+.1f}% | {verdict} |')
+
+for span_key, label in key_spans:
+    ref_s = ref.get('jaeger', {}).get(span_key, {})
+    cur_s = cur.get('jaeger', {}).get(span_key, {})
+    ref_avg = ref_s.get('avg', 0)
+    cur_avg = cur_s.get('avg', 0)
+    ref_p95 = ref_s.get('p95', 0)
+    cur_p95 = cur_s.get('p95', 0)
+    if ref_avg > 0 and cur_avg > 0:
+        pct = ((cur_avg - ref_avg) / ref_avg) * 100
+        if pct > threshold:
+            verdict = f'🔴 +{pct:.0f}% REGRESSION'
+            regressions.append(f'{label}: {ref_avg:.0f}ms → {cur_avg:.0f}ms (+{pct:.0f}%)')
+        elif pct < -threshold:
+            verdict = f'🟢 {pct:.0f}% IMPROVED'
+            improvements.append(f'{label}: {ref_avg:.0f}ms → {cur_avg:.0f}ms ({pct:.0f}%)')
+        else:
+            verdict = f'⚪ {pct:+.0f}% stable'
+            stable.append(label)
+        lines.append(f'| {label} (Jaeger) | {ref_avg:.0f}ms (p95: {ref_p95:.0f}ms) | {cur_avg:.0f}ms (p95: {cur_p95:.0f}ms) | {pct:+.1f}% | {verdict} |')
+
+print('\n'.join(lines))
+print()
+if regressions:
+    print('REGRESSIONS_FOUND=true')
+    print('### 🔴 Regressions')
+    for r in regressions:
+        print(f'- {r}')
+if improvements:
+    print('### 🟢 Improvements')
+    for i in improvements:
+        print(f'- {i}')
+if stable:
+    print(f'### ⚪ Stable ({len(stable)} components)')
+    print(f'- {', '.join(stable)}')
+" 2>/dev/null || echo "Failed to compare")
+
+  if echo "$COMPARISON" | grep -q "REGRESSIONS_FOUND=true"; then
+    REGRESSION_FOUND=true
+    COMPARISON=$(echo "$COMPARISON" | grep -v "REGRESSIONS_FOUND=true")
+  fi
+else
+  info "Saving as reference baseline..."
+  cp "$REPORT_DIR/snapshot-$TIMESTAMP.json" "$REFERENCE_FILE"
+  ok "Reference saved to $REFERENCE_FILE"
+  COMPARISON="*First run — this is now the reference baseline. Future runs will compare against it.*"
+fi
+
+# ── Verdict ──────────────────────────────────────────────────────
+
+if [ ! -f "$REFERENCE_FILE" ] || [ "$(cat "$REFERENCE_FILE" | python3 -c "import json,sys; print(json.load(sys.stdin).get('timestamp',''))" 2>/dev/null)" = "$TIMESTAMP" ]; then
+  VERDICT="📊 **BASELINE ESTABLISHED** — first run, no comparison available"
+elif [ "$REGRESSION_FOUND" = true ]; then
+  VERDICT="🔴 **REGRESSION DETECTED** — performance degraded beyond ${REGRESSION_THRESHOLD}% threshold"
+else
+  VERDICT="🟢 **PASS** — no regressions detected (threshold: ${REGRESSION_THRESHOLD}%)"
+fi
+
+# ── Generate metrics table ───────────────────────────────────────
 
 METRICS_TABLE=$(python3 -c "
 import json
@@ -133,7 +322,6 @@ import json
 pre = json.loads('''$PRE_METRICS''')
 post = json.loads('''$POST_METRICS''')
 
-# Separate counters and histograms
 counters = []
 histograms = []
 
@@ -179,11 +367,10 @@ for short, pv, av in histograms:
 LOCUST_SUMMARY=""
 if [ -f "${CSV_PREFIX}_stats.csv" ]; then
   LOCUST_SUMMARY=$(python3 -c "
-import csv, io
+import csv
 
 with open('${CSV_PREFIX}_stats.csv') as f:
-    reader = csv.DictReader(f)
-    rows = list(reader)
+    rows = list(csv.DictReader(f))
 
 print('| Type | Name | Reqs | Fails | Avg(ms) | p50 | p95 | p99 | Max |')
 print('|------|------|------|-------|---------|-----|-----|-----|-----|')
@@ -208,6 +395,10 @@ for r in rows:
 " 2>/dev/null || echo "Failed to parse Locust CSV")
 fi
 
+# ── Write report ─────────────────────────────────────────────────
+
+info "Generating baseline report..."
+
 cat > "$REPORT_FILE" << REPORT
 # Performance Baseline Report
 
@@ -218,6 +409,14 @@ cat > "$REPORT_FILE" << REPORT
 **Load:** $USERS users, $DURATION, spawn=$SPAWN_RATE/s
 
 ---
+
+## Verdict
+
+$VERDICT
+
+## Regression Analysis
+
+$COMPARISON
 
 ## OTEL Metrics
 
@@ -241,12 +440,6 @@ $JAEGER_SUMMARY
 | Graph cache MISSes | $GRAPH_MISSES |
 | Log errors/exceptions | $ERRORS |
 
-## Hot Path Summary
-
-The dominant hot path is the LLM call (\`ChatGoogleGenerativeAI\`), consuming 95%+ of
-total request time. Graph build overhead is ~100ms cached, ~850ms cold. All middleware
-combined is <5ms.
-
 ## Files Generated
 
 - \`$REPORT_FILE\` — this report
@@ -254,7 +447,7 @@ combined is <5ms.
 - \`$REPORT_DIR/metrics-pre-$TIMESTAMP.json\` — OTEL metrics before test
 - \`$REPORT_DIR/metrics-post-$TIMESTAMP.json\` — OTEL metrics after test
 - \`$REPORT_DIR/jaeger-traces-$TIMESTAMP.json\` — Jaeger raw traces
-- \`$REPORT_DIR/locust-output-$TIMESTAMP.log\` — Locust console output
+- \`$REPORT_DIR/snapshot-$TIMESTAMP.json\` — Snapshot for future comparison
 
 ## Observability Endpoints
 
@@ -267,11 +460,17 @@ REPORT
 
 ok "Report generated: $REPORT_FILE"
 
+# ── Console output ───────────────────────────────────────────────
+
 echo ""
 echo "════════════════════════════════════════════"
-echo "  BASELINE SUMMARY"
+echo "  $VERDICT"
 echo "════════════════════════════════════════════"
 echo ""
+if [ -n "$COMPARISON" ] && [ "$COMPARISON" != "*First run — this is now the reference baseline. Future runs will compare against it.*" ]; then
+  echo "$COMPARISON"
+  echo ""
+fi
 echo "$METRICS_TABLE"
 echo ""
 if [ -n "$JAEGER_SUMMARY" ]; then
@@ -280,3 +479,4 @@ fi
 echo ""
 echo "Report: $REPORT_FILE"
 echo "CSV:    ${CSV_PREFIX}_stats.csv"
+echo "Ref:    $REFERENCE_FILE"

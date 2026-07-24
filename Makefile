@@ -1,4 +1,4 @@
-.PHONY: local dev test clean deploy deploy-headless undeploy undeploy-headless kind kind-down container container-down local-down test-triggers test-integration test-headless headless
+.PHONY: local dev test clean deploy deploy-headless undeploy undeploy-headless kind kind-down container container-down local-down test-triggers test-integration test-headless headless perf-baseline perf-smoke
 
 # OpenShift namespace (can be overridden: make deploy openshift NAMESPACE=my-project)
 NAMESPACE ?= $(shell oc project -q 2>/dev/null)
@@ -158,6 +158,23 @@ container:
 
 container-down:
 	@export PODMAN_COMPOSE_SILENT=true && podman-compose -f compose.yaml --profile observability down
+
+# ---------------------------------------------------------------------------
+# Performance baseline
+# ---------------------------------------------------------------------------
+
+perf-baseline: ## Run performance baseline (3 users, 90s) — requires running agent + Jaeger
+	@echo "Running performance baseline..."
+	@echo "  Agent:  $${AGENT_BASE_URL:-http://localhost:5002}"
+	@echo "  Jaeger: $${JAEGER_URL:-http://localhost:16686}"
+	@echo ""
+	@./scripts/perf-baseline.sh
+
+perf-smoke: ## Quick smoke test (1 user, 30s)
+	@PERF_USERS=1 PERF_DURATION=30s ./scripts/perf-baseline.sh
+
+perf-stress: ## Stress test (10 users, 5m)
+	@PERF_USERS=10 PERF_DURATION=5m PERF_SPAWN_RATE=2 ./scripts/perf-baseline.sh
 
 # ---------------------------------------------------------------------------
 # Development environment targets

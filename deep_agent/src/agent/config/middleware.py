@@ -114,6 +114,21 @@ class PIIConfig(BaseModel):
     rules: list[PIIRule] = Field(default_factory=list)
 
 
+class DynamicSubagentConfig(BaseModel):
+    """Config for CodeInterpreterMiddleware — programmatic subagent dispatch."""
+
+    enabled: bool = False
+    memory_limit: int = Field(default=64 * 1024 * 1024, ge=1024 * 1024)
+    timeout: float = Field(default=5.0, ge=1.0, le=30.0)
+    max_ptc_calls: int | None = Field(default=256, ge=1)
+    tool_name: str = "eval"
+    max_result_chars: int = Field(default=4000, ge=100)
+    capture_console: bool = True
+    subagents: bool = True
+    mode: Literal["thread", "turn", "call"] = "thread"
+    ptc: list[str] = Field(default_factory=list)
+
+
 class MiddlewareDefaults(BaseModel):
     """Global middleware defaults from middleware.yaml."""
 
@@ -132,6 +147,9 @@ class MiddlewareDefaults(BaseModel):
     pii: PIIConfig = Field(default_factory=PIIConfig)
     extra: list[str] = Field(default_factory=list)
     code_execution: CodeExecutionConfig = Field(default_factory=CodeExecutionConfig)
+    dynamic_subagents: DynamicSubagentConfig = Field(
+        default_factory=DynamicSubagentConfig
+    )
 
 
 class ProfileConfig(BaseModel):
@@ -168,6 +186,9 @@ class ResolvedMiddlewareConfig(BaseModel):
     extra_middleware: list[str] = Field(default_factory=list)
     excluded_middleware: list[str] = Field(default_factory=list)
     code_execution: CodeExecutionConfig = Field(default_factory=CodeExecutionConfig)
+    dynamic_subagents: DynamicSubagentConfig = Field(
+        default_factory=DynamicSubagentConfig
+    )
 
 
 def load_middleware_config(config_path: Path) -> MiddlewareFileConfig:
@@ -252,6 +273,12 @@ def resolve_middleware(
     if isinstance(overrides.get("code_execution"), dict):
         code_execution = CodeExecutionConfig.model_validate(overrides["code_execution"])
 
+    dynamic_subagents = defaults.dynamic_subagents
+    if isinstance(overrides.get("dynamic_subagents"), dict):
+        dynamic_subagents = DynamicSubagentConfig.model_validate(
+            overrides["dynamic_subagents"]
+        )
+
     return ResolvedMiddlewareConfig(
         summarization_tool_enabled=summarization_enabled,
         human_approval=human_approval,
@@ -268,6 +295,7 @@ def resolve_middleware(
         extra_middleware=extra,
         excluded_middleware=profile.excluded_middleware,
         code_execution=code_execution,
+        dynamic_subagents=dynamic_subagents,
     )
 
 

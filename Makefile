@@ -124,7 +124,7 @@ local:
 		POSTGRES_USER=postgres \
 		POSTGRES_PASSWORD=postgres \
 		REDIS_URL=redis://localhost:6379/0 \
-		.venv/bin/aegra dev --port 5002 --no-db-check
+		$(if $(wildcard .venv-dynamic-subagent/bin/aegra),.venv-dynamic-subagent,.venv)/bin/aegra dev --port 5002 --no-db-check
 
 local-down:
 	@export PODMAN_COMPOSE_SILENT=true && podman-compose -f compose.yaml stop pgvector redis

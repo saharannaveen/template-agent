@@ -74,10 +74,10 @@ def build_async_middleware(
 
 
 def _extract_async_subagents(subagents: list[Any]) -> list[Any]:
-    """Filter the subagent list for AsyncSubAgent instances."""
-    try:
-        from deepagents.middleware.async_subagents import AsyncSubAgent
+    """Filter the subagent list for AsyncSubAgent dicts.
 
-        return [s for s in subagents if isinstance(s, AsyncSubAgent)]
-    except ImportError:
-        return []
+    AsyncSubAgent is a TypedDict — Python 3.14+ forbids isinstance()
+    checks on TypedDicts. Detect by the presence of 'graph_id', which
+    only AsyncSubAgent carries (SubAgent/CompiledSubAgent don't have it).
+    """
+    return [s for s in subagents if isinstance(s, dict) and "graph_id" in s]

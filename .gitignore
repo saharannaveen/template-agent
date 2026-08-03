@@ -250,3 +250,4 @@ docker-compose.yml
 scripts/
 docs/superpowers/plans/
 docs/superpowers/specs/2026-07-13-*
+.venv-dynamic-subagent/

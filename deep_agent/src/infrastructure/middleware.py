@@ -92,6 +92,12 @@ def build_middleware_list(
             _build_code_execution(resolved.code_execution),
         )
 
+    if resolved.dynamic_subagents.enabled:
+        _append_if_built(
+            middlewares,
+            _build_dynamic_subagents(resolved.dynamic_subagents),
+        )
+
     for dotted_path in resolved.extra_middleware:
         _append_if_built(middlewares, _import_middleware(dotted_path))
 
@@ -304,6 +310,43 @@ def _build_code_execution(config: Any) -> Any | None:
         return None
     except Exception as e:
         logger.warning("Failed to create CodeExecutionMiddleware: %s", e)
+        return None
+
+
+def _build_dynamic_subagents(config: Any) -> Any | None:
+    """Build CodeInterpreterMiddleware for programmatic subagent dispatch."""
+    try:
+        from langchain_quickjs import CodeInterpreterMiddleware
+
+        kwargs: dict[str, Any] = {
+            "memory_limit": config.memory_limit,
+            "timeout": config.timeout,
+            "max_ptc_calls": config.max_ptc_calls,
+            "tool_name": config.tool_name,
+            "max_result_chars": config.max_result_chars,
+            "capture_console": config.capture_console,
+            "subagents": config.subagents,
+            "mode": config.mode,
+        }
+        if config.ptc:
+            kwargs["ptc"] = config.ptc
+
+        mw = CodeInterpreterMiddleware(**kwargs)
+        logger.info(
+            "Dynamic subagents enabled (tool=%s, mode=%s, ptc=%s)",
+            config.tool_name,
+            config.mode,
+            config.ptc or "none",
+        )
+        return mw
+    except ImportError:
+        logger.warning(
+            "CodeInterpreterMiddleware not available — "
+            "install langchain-quickjs>=0.3.5 or deepagents[quickjs]"
+        )
+        return None
+    except Exception as e:
+        logger.warning("Failed to create CodeInterpreterMiddleware: %s", e)
         return None
 
 

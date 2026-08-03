@@ -183,6 +183,21 @@ middleware:
     cost_tracking_enabled: false          # emit resource usage OTEL metrics
     # --- Streaming ---
     streaming_enabled: false              # real-time stdout/stderr streaming via SSE
+  # --- Dynamic Subagents (CodeInterpreterMiddleware + QuickJS) ---
+  # Enables programmatic subagent dispatch: the LLM writes JavaScript that
+  # calls task() to fan out work across subagents in loops, branches, and
+  # parallel batches. Requires deepagents[quickjs] (langchain-quickjs>=0.3.5).
+  dynamic_subagents:
+    enabled: true
+    memory_limit: 67108864              # 64MB QuickJS heap shared across contexts
+    timeout: 5.0                        # per-eval call timeout in seconds
+    max_ptc_calls: 256                  # max programmatic tool calls per eval
+    tool_name: eval                     # tool name exposed to the LLM
+    max_result_chars: 4000              # result/stdout truncation limit
+    capture_console: true               # bridge console.log/warn/error
+    subagents: true                     # expose task() global for subagent dispatch
+    mode: thread                        # thread | turn | call — variable persistence
+    ptc: []                             # tools accessible from JS code (e.g., [glob, grep])
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Async Tasks                                                    [YAML-loaded]
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

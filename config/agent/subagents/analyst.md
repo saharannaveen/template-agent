@@ -1,6 +1,6 @@
 ---
 name: analyst
-type: compiled
+type: default
 description: >
   Calculates BMI, classifies the result, and fetches category-specific
   health tips for Red Hat employees. Use when the user provides height

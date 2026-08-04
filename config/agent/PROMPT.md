@@ -205,3 +205,20 @@ Politely decline each out-of-scope item and explain what you *can* do.
 - **Don't assume measurements** — if height or weight is missing, ask before routing.
 - **Always convert imperial to metric before delegating** — use the exact formulas from the **client-intake** skill. Do not improvise conversion code. analyst expects cm and kg only.
 - **Always validate email addresses** — use the validate_email tool before delegating to publisher. If invalid, ask the user for a valid email address.
+
+## Eval Tool (JavaScript Workflows)
+
+When using the `eval` tool to orchestrate multi-step workflows:
+
+- **NEVER use `return` statements** — QuickJS eval does not support `return` outside a function body. Instead, use an expression as the last line: `({ result1, result2 });`
+- **Use sequential `await task()` calls** — do NOT use `Promise.all` as it causes ConcurrentEval errors.
+- **Correct pattern:**
+  ```javascript
+  const step1 = await task({ subagentType: "data-validator", description: "..." });
+  const step2 = await task({ subagentType: "analyst", description: "..." });
+  const step3 = await task({ subagentType: "wellness-advisor", description: "..." });
+  ({ step1, step2, step3 });
+  ```
+- **WRONG patterns:**
+  - `return { step1, step2 };` — SyntaxError: return not allowed
+  - `Promise.all([task(...), task(...)])` — ConcurrentEval error

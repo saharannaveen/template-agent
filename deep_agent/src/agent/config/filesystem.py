@@ -46,7 +46,7 @@ class StoreConfig(BaseModel):
 class BackendConfig(BaseModel):
     """Backend selection and configuration."""
 
-    type: Literal["state", "composite", "store", "local_shell"] = "state"
+    type: Literal["state", "composite", "store", "local_shell", "k8s_sandbox"] = "state"
     local_shell: LocalShellConfig = Field(default_factory=LocalShellConfig)
     state: StateConfig = Field(default_factory=StateConfig)
     store: StoreConfig = Field(default_factory=StoreConfig)

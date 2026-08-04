@@ -270,9 +270,28 @@ def get_configured_backend() -> LocalShellBackend | Any:
             max_output_bytes=fs_config.backend.local_shell.max_output_bytes,
         )
 
-    # Fallback for any backend type not explicitly handled above
-    logger.warning("Unknown backend type '%s', falling back to state", backend_type)  # type: ignore[unreachable]
-    return _build_state_backend()
+    # backend_type == "k8s_sandbox"
+    return _build_k8s_sandbox()
+
+
+def _build_k8s_sandbox() -> Any:
+    """Build a K8sSandbox backend for sandboxed execution via K8s Jobs."""
+    try:
+        from deep_agent.src.agent.config import agent_config as _agent_config
+        from deep_agent.src.code_execution.k8s_sandbox import K8sSandbox
+
+        resolved_mw = _agent_config.resolve_agent_middleware("")
+        config = resolved_mw.code_execution
+
+        sandbox = K8sSandbox(config=config)
+        logger.info("Using K8sSandbox backend (ephemeral K8s Jobs)")
+        return sandbox
+    except ImportError:
+        logger.warning(
+            "K8sSandbox not available (missing kubernetes package?), "
+            "falling back to StateBackend"
+        )
+        return _build_state_backend()
 
 
 def _build_state_backend() -> Any:

@@ -95,6 +95,10 @@ def build_middleware_list(
     if resolved.dynamic_subagents.enabled:
         _append_if_built(
             middlewares,
+            _build_workflow_progress(resolved.dynamic_subagents.tool_name),
+        )
+        _append_if_built(
+            middlewares,
             _build_dynamic_subagents(resolved.dynamic_subagents),
         )
 
@@ -310,6 +314,19 @@ def _build_code_execution(config: Any) -> Any | None:
         return None
     except Exception as e:
         logger.warning("Failed to create CodeExecutionMiddleware: %s", e)
+        return None
+
+
+def _build_workflow_progress(tool_name: str) -> Any | None:
+    """Build WorkflowProgressMiddleware for eval tool call progress events."""
+    try:
+        from deep_agent.src.streaming.workflow_middleware import (
+            WorkflowProgressMiddleware,
+        )
+
+        return WorkflowProgressMiddleware(tool_name=tool_name)
+    except Exception as e:
+        logger.debug("WorkflowProgressMiddleware not available: %s", e)
         return None
 
 

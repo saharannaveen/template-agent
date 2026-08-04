@@ -119,7 +119,7 @@ class DynamicSubagentConfig(BaseModel):
 
     enabled: bool = False
     memory_limit: int = Field(default=64 * 1024 * 1024, ge=1024 * 1024)
-    timeout: float = Field(default=5.0, ge=1.0, le=30.0)
+    timeout: float = Field(default=30.0, ge=1.0, le=600.0)
     max_ptc_calls: int | None = Field(default=256, ge=1)
     tool_name: str = "eval"
     max_result_chars: int = Field(default=4000, ge=100)

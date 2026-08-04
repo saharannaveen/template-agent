@@ -370,7 +370,7 @@ def _build_default_subagent(
         "Subagent '%s' [default] using model: %s", name, _format_model_log(spec)
     )
 
-    tool_names: list[str] = agent_cfg.get("tools", [])
+    tool_names: list[str] = agent_cfg.get("allowed_tools", agent_cfg.get("tools", []))
     mcp_names: list[str] = agent_cfg.get("mcps", [])
 
     if tool_names:
@@ -437,7 +437,7 @@ def _build_compiled_subagent(
         "Subagent '%s' [compiled] using model: %s", name, _format_model_log(spec)
     )
 
-    tool_names: list[str] = agent_cfg.get("tools", [])
+    tool_names: list[str] = agent_cfg.get("allowed_tools", agent_cfg.get("tools", []))
     mcp_names: list[str] = agent_cfg.get("mcps", [])
 
     if tool_names:

@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from todo_app.main import app, db
+from todo_app.models import TodoStatus
 
 
 @pytest.fixture(autouse=True)
@@ -20,9 +21,23 @@ def client():
     return TestClient(app)
 
 
-def _create_todo(client: TestClient, title: str = "Test", description: str = "Desc", completed: bool = False):
+def _create_todo(
+    client: TestClient,
+    title: str = "Test",
+    description: str = "Desc",
+    completed: bool = False,
+    status: str = "Not Started",
+):
     """Helper to create a TODO item and return the response."""
-    return client.post("/todos/", json={"title": title, "description": description, "completed": completed})
+    return client.post(
+        "/todos/",
+        json={
+            "title": title,
+            "description": description,
+            "completed": completed,
+            "status": status,
+        },
+    )
 
 
 class TestCreateTodo:
@@ -36,6 +51,7 @@ class TestCreateTodo:
         assert data["title"] == "Buy groceries"
         assert data["description"] == "Milk, eggs, bread"
         assert data["completed"] is False
+        assert data["status"] == "Not Started"
 
     def test_create_todo_with_completed_true(self, client):
         resp = _create_todo(client, title="Done task", description="Already done", completed=True)
@@ -60,6 +76,23 @@ class TestCreateTodo:
         resp = client.post("/todos/", json={})
         assert resp.status_code == 422
 
+    def test_create_todo_with_status_in_progress(self, client):
+        resp = _create_todo(client, title="WIP", description="D", status="In Progress")
+        assert resp.status_code == 201
+        assert resp.json()["status"] == "In Progress"
+
+    def test_create_todo_with_status_completed(self, client):
+        resp = _create_todo(client, title="Done", description="D", status="Completed")
+        assert resp.status_code == 201
+        assert resp.json()["status"] == "Completed"
+
+    def test_create_todo_with_invalid_status(self, client):
+        resp = client.post(
+            "/todos/",
+            json={"title": "T", "description": "D", "status": "InvalidStatus"},
+        )
+        assert resp.status_code == 422
+
 
 class TestGetTodos:
     """Tests for GET /todos/"""
@@ -79,6 +112,11 @@ class TestGetTodos:
         assert data[0]["title"] == "A"
         assert data[1]["title"] == "B"
 
+    def test_get_todos_includes_status(self, client):
+        _create_todo(client, title="A", description="a", status="In Progress")
+        resp = client.get("/todos/")
+        assert resp.json()[0]["status"] == "In Progress"
+
 
 class TestGetTodoById:
     """Tests for GET /todos/{todo_id}"""
@@ -94,6 +132,14 @@ class TestGetTodoById:
         resp = client.get("/todos/999")
         assert resp.status_code == 404
         assert resp.json()["detail"] == "TODO item not found"
+
+    def test_get_todo_includes_status(self, client):
+        create_resp = _create_todo(
+            client, title="T", description="D", status="Completed"
+        )
+        todo_id = create_resp.json()["id"]
+        resp = client.get(f"/todos/{todo_id}")
+        assert resp.json()["status"] == "Completed"
 
 
 class TestUpdateTodo:
@@ -147,6 +193,45 @@ class TestUpdateTodo:
         assert resp.status_code == 404
         assert resp.json()["detail"] == "TODO item not found"
 
+    def test_update_status_to_in_progress(self, client):
+        create_resp = _create_todo(client, title="T", description="D")
+        todo_id = create_resp.json()["id"]
+        resp = client.put(f"/todos/{todo_id}", json={"status": "In Progress"})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "In Progress"
+
+    def test_update_status_to_completed(self, client):
+        create_resp = _create_todo(client, title="T", description="D")
+        todo_id = create_resp.json()["id"]
+        resp = client.put(f"/todos/{todo_id}", json={"status": "Completed"})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "Completed"
+
+    def test_update_status_to_not_started(self, client):
+        create_resp = _create_todo(
+            client, title="T", description="D", status="Completed"
+        )
+        todo_id = create_resp.json()["id"]
+        resp = client.put(f"/todos/{todo_id}", json={"status": "Not Started"})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "Not Started"
+
+    def test_update_status_invalid_value(self, client):
+        create_resp = _create_todo(client, title="T", description="D")
+        todo_id = create_resp.json()["id"]
+        resp = client.put(f"/todos/{todo_id}", json={"status": "InvalidStatus"})
+        assert resp.status_code == 422
+
+    def test_update_status_preserves_other_fields(self, client):
+        create_resp = _create_todo(client, title="T", description="D")
+        todo_id = create_resp.json()["id"]
+        resp = client.put(f"/todos/{todo_id}", json={"status": "In Progress"})
+        data = resp.json()
+        assert data["title"] == "T"
+        assert data["description"] == "D"
+        assert data["completed"] is False
+        assert data["status"] == "In Progress"
+
 
 class TestDeleteTodo:
     """Tests for DELETE /todos/{todo_id}"""
@@ -174,6 +259,22 @@ class TestDeleteTodo:
         resp = client.get("/todos/")
         assert len(resp.json()) == 1
         assert resp.json()[0]["title"] == "A"
+
+
+class TestFrontend:
+    """Tests for the HTML frontend endpoint."""
+
+    def test_frontend_returns_html(self, client):
+        resp = client.get("/")
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers["content-type"]
+        assert "TODO App" in resp.text
+
+    def test_frontend_contains_status_options(self, client):
+        resp = client.get("/")
+        assert "Not Started" in resp.text
+        assert "In Progress" in resp.text
+        assert "Completed" in resp.text
 
 
 class TestEndToEndWorkflow:
@@ -209,3 +310,38 @@ class TestEndToEndWorkflow:
 
         resp = client.get("/todos/")
         assert resp.json() == []
+
+    def test_full_status_workflow(self, client):
+        """Test the complete lifecycle of status transitions."""
+        # Create with default status
+        resp = _create_todo(client, title="Feature", description="Build it")
+        assert resp.status_code == 201
+        todo_id = resp.json()["id"]
+        assert resp.json()["status"] == "Not Started"
+
+        # Transition to In Progress
+        resp = client.put(f"/todos/{todo_id}", json={"status": "In Progress"})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "In Progress"
+
+        # Transition to Completed
+        resp = client.put(
+            f"/todos/{todo_id}",
+            json={"status": "Completed", "completed": True},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "Completed"
+        assert resp.json()["completed"] is True
+
+        # Verify via GET
+        resp = client.get(f"/todos/{todo_id}")
+        assert resp.json()["status"] == "Completed"
+
+        # Revert back to Not Started
+        resp = client.put(
+            f"/todos/{todo_id}",
+            json={"status": "Not Started", "completed": False},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "Not Started"
+        assert resp.json()["completed"] is False

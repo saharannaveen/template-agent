@@ -1,7 +1,16 @@
 """Pydantic models for the TODO application."""
 
+from enum import Enum
+
 from pydantic import BaseModel
 from typing import Optional
+
+
+class TodoStatus(str, Enum):
+    """Possible status values for a TODO item."""
+    NOT_STARTED = "Not Started"
+    IN_PROGRESS = "In Progress"
+    COMPLETED = "Completed"
 
 
 class TodoCreate(BaseModel):
@@ -9,6 +18,7 @@ class TodoCreate(BaseModel):
     title: str
     description: str
     completed: bool = False
+    status: TodoStatus = TodoStatus.NOT_STARTED
 
 
 class TodoUpdate(BaseModel):
@@ -16,6 +26,7 @@ class TodoUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
     completed: Optional[bool] = None
+    status: Optional[TodoStatus] = None
 
 
 class TodoItem(BaseModel):
@@ -24,3 +35,4 @@ class TodoItem(BaseModel):
     title: str
     description: str
     completed: bool = False
+    status: TodoStatus = TodoStatus.NOT_STARTED

@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TODO App</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background: #f0f2f5; color: #1a1a2e; min-height: 100vh; display: flex; justify-content: center; padding: 2rem 1rem; }
+    .container { width: 100%; max-width: 700px; }
+    h1 { text-align: center; margin-bottom: 1.5rem; font-size: 2rem; }
+    /* ---- Form ---- */
+    .todo-form { background: #fff; padding: 1.5rem; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,.08); margin-bottom: 1.5rem; display: flex; flex-direction: column; gap: .75rem; }
+    .todo-form input, .todo-form select { padding: .6rem .8rem; border: 1px solid #ccc; border-radius: 6px; font-size: .95rem; }
+    .todo-form button { padding: .65rem; background: #4361ee; color: #fff; border: none; border-radius: 6px; font-size: 1rem; cursor: pointer; }
+    .todo-form button:hover { background: #3a56d4; }
+    /* ---- List ---- */
+    .todo-list { list-style: none; display: flex; flex-direction: column; gap: .75rem; }
+    .todo-card { background: #fff; border-radius: 10px; padding: 1rem 1.25rem; box-shadow: 0 2px 6px rgba(0,0,0,.06); display: flex; flex-direction: column; gap: .5rem; }
+    .todo-card .top-row { display: flex; justify-content: space-between; align-items: center; }
+    .todo-card .title { font-weight: 600; font-size: 1.05rem; }
+    .todo-card .desc { color: #555; font-size: .9rem; }
+    .todo-card .bottom-row { display: flex; justify-content: space-between; align-items: center; }
+    .status-badge { display: inline-block; padding: .2rem .6rem; border-radius: 20px; font-size: .8rem; font-weight: 600; }
+    .status-badge.not-started { background: #e0e0e0; color: #555; }
+    .status-badge.in-progress { background: #fff3cd; color: #856404; }
+    .status-badge.completed  { background: #d4edda; color: #155724; }
+    .actions { display: flex; gap: .4rem; align-items: center; }
+    .actions select { padding: .3rem .5rem; border-radius: 6px; border: 1px solid #ccc; font-size: .85rem; }
+    .actions button { padding: .3rem .6rem; border: none; border-radius: 6px; font-size: .85rem; cursor: pointer; }
+    .btn-delete { background: #e63946; color: #fff; }
+    .btn-delete:hover { background: #c5303c; }
+    .empty-msg { text-align: center; color: #888; padding: 2rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>📝 TODO App</h1>
+
+    <form class="todo-form" id="todoForm">
+      <input type="text" id="titleInput" placeholder="Title" required />
+      <input type="text" id="descInput" placeholder="Description" required />
+      <select id="statusInput">
+        <option value="Not Started">Not Started</option>
+        <option value="In Progress">In Progress</option>
+        <option value="Completed">Completed</option>
+      </select>
+      <button type="submit">Add TODO</button>
+    </form>
+
+    <ul class="todo-list" id="todoList"></ul>
+  </div>
+
+  <script>
+    const API = '/todos/';
+    const listEl = document.getElementById('todoList');
+    const form   = document.getElementById('todoForm');
+
+    function badgeClass(status) {
+      if (status === 'In Progress') return 'in-progress';
+      if (status === 'Completed')   return 'completed';
+      return 'not-started';
+    }
+
+    async function fetchTodos() {
+      const res  = await fetch(API);
+      const data = await res.json();
+      renderTodos(data);
+    }
+
+    function renderTodos(todos) {
+      if (todos.length === 0) {
+        listEl.innerHTML = '<li class="empty-msg">No TODO items yet. Add one above!</li>';
+        return;
+      }
+      listEl.innerHTML = todos.map(t => `
+        <li class="todo-card" data-id="${t.id}">
+          <div class="top-row">
+            <span class="title">${esc(t.title)}</span>
+            <span class="status-badge ${badgeClass(t.status)}">${esc(t.status)}</span>
+          </div>
+          <div class="desc">${esc(t.description)}</div>
+          <div class="bottom-row">
+            <div class="actions">
+              <select onchange="updateStatus(${t.id}, this.value)">
+                <option value="Not Started" ${t.status==='Not Started'?'selected':''}>Not Started</option>
+                <option value="In Progress" ${t.status==='In Progress'?'selected':''}>In Progress</option>
+                <option value="Completed"   ${t.status==='Completed'  ?'selected':''}>Completed</option>
+              </select>
+              <button class="btn-delete" onclick="deleteTodo(${t.id})">Delete</button>
+            </div>
+          </div>
+        </li>`).join('');
+    }
+
+    function esc(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      const title  = document.getElementById('titleInput').value.trim();
+      const desc   = document.getElementById('descInput').value.trim();
+      const status = document.getElementById('statusInput').value;
+      if (!title || !desc) return;
+      await fetch(API, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ title, description: desc, status })
+      });
+      form.reset();
+      fetchTodos();
+    });
+
+    async function updateStatus(id, newStatus) {
+      const completed = newStatus === 'Completed';
+      await fetch(`${API}${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ status: newStatus, completed })
+      });
+      fetchTodos();
+    }
+
+    async function deleteTodo(id) {
+      await fetch(`${API}${id}`, { method: 'DELETE' });
+      fetchTodos();
+    }
+
+    fetchTodos();
+  </script>
+</body>
+</html>

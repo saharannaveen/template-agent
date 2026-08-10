@@ -2,7 +2,7 @@
 
 import pytest
 from todo_app.database import TodoDatabase
-from todo_app.models import TodoCreate, TodoUpdate
+from todo_app.models import TodoCreate, TodoUpdate, TodoStatus
 
 
 @pytest.fixture
@@ -78,3 +78,39 @@ class TestTodoDatabase:
         assert db.get_all() == []
         new_item = db.create(TodoCreate(title="B", description="b"))
         assert new_item.id == 1  # counter reset
+
+    # --- Status-related tests ---
+
+    def test_create_defaults_status_to_not_started(self, db):
+        item = db.create(TodoCreate(title="Test", description="Desc"))
+        assert item.status == TodoStatus.NOT_STARTED
+
+    def test_create_with_explicit_status(self, db):
+        item = db.create(
+            TodoCreate(title="WIP", description="D", status="In Progress")
+        )
+        assert item.status == TodoStatus.IN_PROGRESS
+
+    def test_update_status_field(self, db):
+        created = db.create(TodoCreate(title="Task", description="D"))
+        assert created.status == TodoStatus.NOT_STARTED
+        updated = db.update(created.id, TodoUpdate(status="In Progress"))
+        assert updated is not None
+        assert updated.status == TodoStatus.IN_PROGRESS
+
+    def test_update_status_to_completed(self, db):
+        created = db.create(TodoCreate(title="Task", description="D"))
+        updated = db.update(created.id, TodoUpdate(status="Completed"))
+        assert updated is not None
+        assert updated.status == TodoStatus.COMPLETED
+
+    def test_update_status_preserves_other_fields(self, db):
+        created = db.create(
+            TodoCreate(title="Task", description="Details", completed=False)
+        )
+        updated = db.update(created.id, TodoUpdate(status="In Progress"))
+        assert updated is not None
+        assert updated.title == "Task"
+        assert updated.description == "Details"
+        assert updated.completed is False
+        assert updated.status == TodoStatus.IN_PROGRESS

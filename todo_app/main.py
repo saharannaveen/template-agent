@@ -1,6 +1,9 @@
 """FastAPI application for the TODO list."""
 
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 from typing import List
 
 from todo_app.models import TodoCreate, TodoUpdate, TodoItem
@@ -13,6 +16,14 @@ app = FastAPI(
 )
 
 db = TodoDatabase()
+
+_FRONTEND_HTML = (Path(__file__).parent / "frontend.html").read_text()
+
+
+@app.get("/", response_class=HTMLResponse)
+def frontend() -> str:
+    """Serve the single-page TODO frontend."""
+    return _FRONTEND_HTML
 
 
 @app.post("/todos/", response_model=TodoItem, status_code=201)

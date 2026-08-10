@@ -24,6 +24,7 @@ class TodoDatabase:
             title=todo_data.title,
             description=todo_data.description,
             completed=todo_data.completed,
+            status=todo_data.status,
         )
         self._todos[todo_id] = todo
         return todo

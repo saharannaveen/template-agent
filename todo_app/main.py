@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from typing import List
 
-from todo_app.models import TodoCreate, TodoUpdate, TodoItem
+from todo_app.models import TodoCreate, TodoUpdate, TodoItem, TodoProgress
 from todo_app.database import TodoDatabase
 
 app = FastAPI(
@@ -36,6 +36,12 @@ def create_todo(todo: TodoCreate) -> TodoItem:
 def get_todos() -> List[TodoItem]:
     """Get a list of all TODO items."""
     return db.get_all()
+
+
+@app.get("/todos/progress", response_model=TodoProgress)
+def get_progress() -> TodoProgress:
+    """Get progress statistics across all TODO items."""
+    return db.get_progress()
 
 
 @app.get("/todos/{todo_id}", response_model=TodoItem)

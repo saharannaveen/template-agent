@@ -36,3 +36,12 @@ class TodoItem(BaseModel):
     description: str
     completed: bool = False
     status: TodoStatus = TodoStatus.NOT_STARTED
+
+
+class TodoProgress(BaseModel):
+    """Schema representing overall progress across all TODO items."""
+    total: int
+    not_started: int
+    in_progress: int
+    completed: int
+    percent_complete: float

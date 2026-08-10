@@ -9,34 +9,93 @@
     body { font-family: 'Segoe UI', system-ui, sans-serif; background: #f0f2f5; color: #1a1a2e; min-height: 100vh; display: flex; justify-content: center; padding: 2rem 1rem; }
     .container { width: 100%; max-width: 700px; }
     h1 { text-align: center; margin-bottom: 1.5rem; font-size: 2rem; }
+
+    /* ---- Progress Section ---- */
+    .progress-section { background: #fff; padding: 1.5rem; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,.08); margin-bottom: 1.5rem; }
+    .progress-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: .75rem; }
+    .progress-header h2 { font-size: 1.15rem; font-weight: 600; }
+    .progress-percent { font-size: 1.15rem; font-weight: 700; color: #4361ee; }
+    .progress-bar-track { width: 100%; height: 22px; background: #e9ecef; border-radius: 11px; overflow: hidden; position: relative; }
+    .progress-bar-fill { height: 100%; background: linear-gradient(90deg, #4361ee 0%, #3a86ff 100%); border-radius: 11px; transition: width .4s ease; min-width: 0; }
+    .progress-bar-fill.complete { background: linear-gradient(90deg, #2dc653 0%, #38b000 100%); }
+    .progress-stats { display: flex; justify-content: space-around; margin-top: 1rem; gap: .5rem; flex-wrap: wrap; }
+    .stat-item { text-align: center; flex: 1; min-width: 80px; }
+    .stat-count { font-size: 1.5rem; font-weight: 700; }
+    .stat-count.not-started { color: #6c757d; }
+    .stat-count.in-progress { color: #e8960f; }
+    .stat-count.completed   { color: #2dc653; }
+    .stat-label { font-size: .78rem; color: #777; margin-top: .15rem; }
+
     /* ---- Form ---- */
     .todo-form { background: #fff; padding: 1.5rem; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,.08); margin-bottom: 1.5rem; display: flex; flex-direction: column; gap: .75rem; }
     .todo-form input, .todo-form select { padding: .6rem .8rem; border: 1px solid #ccc; border-radius: 6px; font-size: .95rem; }
-    .todo-form button { padding: .65rem; background: #4361ee; color: #fff; border: none; border-radius: 6px; font-size: 1rem; cursor: pointer; }
+    .todo-form input:focus, .todo-form select:focus { outline: none; border-color: #4361ee; box-shadow: 0 0 0 3px rgba(67,97,238,.15); }
+    .todo-form button { padding: .65rem; background: #4361ee; color: #fff; border: none; border-radius: 6px; font-size: 1rem; cursor: pointer; font-weight: 600; }
     .todo-form button:hover { background: #3a56d4; }
+
+    /* ---- Filter Tabs ---- */
+    .filter-bar { display: flex; gap: .5rem; margin-bottom: 1rem; flex-wrap: wrap; }
+    .filter-btn { padding: .4rem .9rem; border: 1px solid #ccc; border-radius: 20px; background: #fff; font-size: .85rem; cursor: pointer; font-weight: 500; transition: all .2s; }
+    .filter-btn:hover { border-color: #4361ee; color: #4361ee; }
+    .filter-btn.active { background: #4361ee; color: #fff; border-color: #4361ee; }
+
     /* ---- List ---- */
     .todo-list { list-style: none; display: flex; flex-direction: column; gap: .75rem; }
-    .todo-card { background: #fff; border-radius: 10px; padding: 1rem 1.25rem; box-shadow: 0 2px 6px rgba(0,0,0,.06); display: flex; flex-direction: column; gap: .5rem; }
+    .todo-card { background: #fff; border-radius: 10px; padding: 1rem 1.25rem; box-shadow: 0 2px 6px rgba(0,0,0,.06); display: flex; flex-direction: column; gap: .5rem; transition: opacity .3s, border-left .2s; border-left: 4px solid transparent; }
+    .todo-card.status-not-started { border-left-color: #adb5bd; }
+    .todo-card.status-in-progress { border-left-color: #e8960f; }
+    .todo-card.status-completed   { border-left-color: #2dc653; }
+    .todo-card.status-completed .title { text-decoration: line-through; color: #888; }
     .todo-card .top-row { display: flex; justify-content: space-between; align-items: center; }
+    .todo-card .title-group { display: flex; align-items: center; gap: .6rem; flex: 1; }
     .todo-card .title { font-weight: 600; font-size: 1.05rem; }
-    .todo-card .desc { color: #555; font-size: .9rem; }
+    .todo-card .desc { color: #555; font-size: .9rem; padding-left: 2rem; }
     .todo-card .bottom-row { display: flex; justify-content: space-between; align-items: center; }
     .status-badge { display: inline-block; padding: .2rem .6rem; border-radius: 20px; font-size: .8rem; font-weight: 600; }
     .status-badge.not-started { background: #e0e0e0; color: #555; }
     .status-badge.in-progress { background: #fff3cd; color: #856404; }
-    .status-badge.completed  { background: #d4edda; color: #155724; }
+    .status-badge.completed   { background: #d4edda; color: #155724; }
     .actions { display: flex; gap: .4rem; align-items: center; }
     .actions select { padding: .3rem .5rem; border-radius: 6px; border: 1px solid #ccc; font-size: .85rem; }
     .actions button { padding: .3rem .6rem; border: none; border-radius: 6px; font-size: .85rem; cursor: pointer; }
     .btn-delete { background: #e63946; color: #fff; }
     .btn-delete:hover { background: #c5303c; }
     .empty-msg { text-align: center; color: #888; padding: 2rem; }
+
+    /* ---- Checkbox ---- */
+    .complete-checkbox { width: 20px; height: 20px; accent-color: #2dc653; cursor: pointer; flex-shrink: 0; }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>📝 TODO App</h1>
 
+    <!-- Progress Tracker -->
+    <div class="progress-section" id="progressSection">
+      <div class="progress-header">
+        <h2>Progress</h2>
+        <span class="progress-percent" id="progressPercent">0%</span>
+      </div>
+      <div class="progress-bar-track" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" id="progressBarTrack">
+        <div class="progress-bar-fill" id="progressBarFill" style="width: 0%"></div>
+      </div>
+      <div class="progress-stats">
+        <div class="stat-item">
+          <div class="stat-count not-started" id="statNotStarted">0</div>
+          <div class="stat-label">Not Started</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-count in-progress" id="statInProgress">0</div>
+          <div class="stat-label">In Progress</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-count completed" id="statCompleted">0</div>
+          <div class="stat-label">Completed</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add TODO Form -->
     <form class="todo-form" id="todoForm">
       <input type="text" id="titleInput" placeholder="Title" required />
       <input type="text" id="descInput" placeholder="Description" required />
@@ -48,13 +107,25 @@
       <button type="submit">Add TODO</button>
     </form>
 
+    <!-- Filter Bar -->
+    <div class="filter-bar" id="filterBar">
+      <button class="filter-btn active" data-filter="all">All</button>
+      <button class="filter-btn" data-filter="Not Started">Not Started</button>
+      <button class="filter-btn" data-filter="In Progress">In Progress</button>
+      <button class="filter-btn" data-filter="Completed">Completed</button>
+    </div>
+
+    <!-- TODO List -->
     <ul class="todo-list" id="todoList"></ul>
   </div>
 
   <script>
     const API = '/todos/';
+    const PROGRESS_API = '/todos/progress';
     const listEl = document.getElementById('todoList');
     const form   = document.getElementById('todoForm');
+    let currentFilter = 'all';
+    let allTodos = [];
 
     function badgeClass(status) {
       if (status === 'In Progress') return 'in-progress';
@@ -62,21 +133,60 @@
       return 'not-started';
     }
 
+    function cardStatusClass(status) {
+      if (status === 'In Progress') return 'status-in-progress';
+      if (status === 'Completed')   return 'status-completed';
+      return 'status-not-started';
+    }
+
     async function fetchTodos() {
       const res  = await fetch(API);
+      allTodos   = await res.json();
+      renderTodos(filterTodos(allTodos));
+      fetchProgress();
+    }
+
+    function filterTodos(todos) {
+      if (currentFilter === 'all') return todos;
+      return todos.filter(t => t.status === currentFilter);
+    }
+
+    async function fetchProgress() {
+      const res  = await fetch(PROGRESS_API);
       const data = await res.json();
-      renderTodos(data);
+      renderProgress(data);
+    }
+
+    function renderProgress(p) {
+      document.getElementById('progressPercent').textContent = p.percent_complete + '%';
+      const fill = document.getElementById('progressBarFill');
+      fill.style.width = p.percent_complete + '%';
+      fill.className = 'progress-bar-fill' + (p.percent_complete === 100 ? ' complete' : '');
+      const track = document.getElementById('progressBarTrack');
+      track.setAttribute('aria-valuenow', p.percent_complete);
+      document.getElementById('statNotStarted').textContent = p.not_started;
+      document.getElementById('statInProgress').textContent = p.in_progress;
+      document.getElementById('statCompleted').textContent  = p.completed;
     }
 
     function renderTodos(todos) {
       if (todos.length === 0) {
-        listEl.innerHTML = '<li class="empty-msg">No TODO items yet. Add one above!</li>';
+        const msg = allTodos.length === 0
+          ? 'No TODO items yet. Add one above!'
+          : 'No items match this filter.';
+        listEl.innerHTML = '<li class="empty-msg">' + msg + '</li>';
         return;
       }
       listEl.innerHTML = todos.map(t => `
-        <li class="todo-card" data-id="${t.id}">
+        <li class="todo-card ${cardStatusClass(t.status)}" data-id="${t.id}">
           <div class="top-row">
-            <span class="title">${esc(t.title)}</span>
+            <div class="title-group">
+              <input type="checkbox" class="complete-checkbox"
+                     title="Mark as completed"
+                     ${t.status === 'Completed' ? 'checked' : ''}
+                     onchange="toggleComplete(${t.id}, this.checked)" />
+              <span class="title">${esc(t.title)}</span>
+            </div>
             <span class="status-badge ${badgeClass(t.status)}">${esc(t.status)}</span>
           </div>
           <div class="desc">${esc(t.description)}</div>
@@ -95,6 +205,16 @@
 
     function esc(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
 
+    /* ---- Filter Tabs ---- */
+    document.getElementById('filterBar').addEventListener('click', e => {
+      if (!e.target.classList.contains('filter-btn')) return;
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      e.target.classList.add('active');
+      currentFilter = e.target.dataset.filter;
+      renderTodos(filterTodos(allTodos));
+    });
+
+    /* ---- Create ---- */
     form.addEventListener('submit', async e => {
       e.preventDefault();
       const title  = document.getElementById('titleInput').value.trim();
@@ -110,6 +230,18 @@
       fetchTodos();
     });
 
+    /* ---- Toggle Complete via Checkbox ---- */
+    async function toggleComplete(id, checked) {
+      const newStatus = checked ? 'Completed' : 'Not Started';
+      await fetch(`${API}${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ status: newStatus, completed: checked })
+      });
+      fetchTodos();
+    }
+
+    /* ---- Update Status via Dropdown ---- */
     async function updateStatus(id, newStatus) {
       const completed = newStatus === 'Completed';
       await fetch(`${API}${id}`, {
@@ -120,6 +252,7 @@
       fetchTodos();
     }
 
+    /* ---- Delete ---- */
     async function deleteTodo(id) {
       await fetch(`${API}${id}`, { method: 'DELETE' });
       fetchTodos();

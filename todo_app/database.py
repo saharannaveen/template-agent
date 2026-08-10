@@ -1,7 +1,7 @@
 """In-memory database for TODO items."""
 
 from typing import Dict, Optional, List
-from todo_app.models import TodoItem, TodoCreate, TodoUpdate
+from todo_app.models import TodoItem, TodoCreate, TodoUpdate, TodoProgress, TodoStatus
 
 
 class TodoDatabase:
@@ -51,6 +51,22 @@ class TodoDatabase:
     def delete(self, todo_id: int) -> Optional[TodoItem]:
         """Delete a TODO item. Returns deleted item or None if not found."""
         return self._todos.pop(todo_id, None)
+
+    def get_progress(self) -> TodoProgress:
+        """Calculate and return progress statistics across all TODO items."""
+        todos = list(self._todos.values())
+        total = len(todos)
+        completed = sum(1 for t in todos if t.status == TodoStatus.COMPLETED)
+        in_progress = sum(1 for t in todos if t.status == TodoStatus.IN_PROGRESS)
+        not_started = sum(1 for t in todos if t.status == TodoStatus.NOT_STARTED)
+        percent_complete = round((completed / total) * 100, 1) if total > 0 else 0.0
+        return TodoProgress(
+            total=total,
+            not_started=not_started,
+            in_progress=in_progress,
+            completed=completed,
+            percent_complete=percent_complete,
+        )
 
     def reset(self) -> None:
         """Clear all data (useful for testing)."""

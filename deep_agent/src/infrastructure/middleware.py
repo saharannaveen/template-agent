@@ -102,6 +102,12 @@ def build_middleware_list(
             _build_dynamic_subagents(resolved.dynamic_subagents),
         )
 
+    if resolved.claude_code.enabled:
+        _append_if_built(
+            middlewares,
+            _build_claude_code_middleware(resolved.claude_code),
+        )
+
     for dotted_path in resolved.extra_middleware:
         _append_if_built(middlewares, _import_middleware(dotted_path))
 
@@ -364,6 +370,19 @@ def _build_dynamic_subagents(config: Any) -> Any | None:
         return None
     except Exception as e:
         logger.warning("Failed to create CodeInterpreterMiddleware: %s", e)
+        return None
+
+
+def _build_claude_code_middleware(config: Any) -> Any | None:
+    """Build ClaudeCodeExecutionMiddleware for sandbox code execution."""
+    try:
+        from deep_agent.src.claude_code.middleware import ClaudeCodeExecutionMiddleware
+        return ClaudeCodeExecutionMiddleware(config=config)
+    except ImportError:
+        logger.debug("ClaudeCodeExecutionMiddleware not available")
+        return None
+    except Exception as e:
+        logger.warning("Failed to create ClaudeCodeExecutionMiddleware: %s", e)
         return None
 
 

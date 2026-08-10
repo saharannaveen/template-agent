@@ -17,10 +17,12 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from deep_agent.aegra.feedback import feedback_router
 from deep_agent.aegra.mcp_routes import router as mcp_router
+from deep_agent.aegra.notification_routes import notification_router
 from deep_agent.aegra.security_middleware import (
     RequestSizeLimitMiddleware,
     SecurityHeadersMiddleware,
 )
+from deep_agent.aegra.workflow_routes import workflow_router
 from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import (
     bind_request_context,
@@ -155,6 +157,8 @@ app.add_middleware(
 )
 app.include_router(mcp_router)
 app.include_router(feedback_router)
+app.include_router(workflow_router, prefix="/api")
+app.include_router(notification_router, prefix="/api")
 
 
 @app.get("/version")

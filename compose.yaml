@@ -125,12 +125,82 @@ services:
       - COLLECTOR_OTLP_ENABLED=true
     restart: unless-stopped
     networks:
-      - demo-network
+      - agent-network
+
+  # ── Temporal Stack (Loop Engineering) ───────────────────────────────
+
+  temporal:
+    profiles: [temporal]
+    image: temporalio/auto-setup:latest
+    container_name: template-agent-temporal
+    ports:
+      - "7233:7233"    # gRPC
+      - "8233:8233"    # UI (metrics)
+    environment:
+      - DB=sqlite
+      - SQLITE_PRAGMA_JOURNAL_MODE=WAL
+    volumes:
+      - temporal_data:/etc/temporal/data
+    restart: unless-stopped
+    networks:
+      - agent-network
+
+  temporal-ui:
+    profiles: [temporal]
+    image: temporalio/ui:latest
+    container_name: template-agent-temporal-ui
+    ports:
+      - "8080:8080"
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:3000
+    depends_on:
+      - temporal
+    restart: unless-stopped
+    networks:
+      - agent-network
+
+  temporal-worker:
+    profiles: [temporal]
+    build:
+      context: .
+      dockerfile: Containerfile
+    container_name: template-agent-temporal-worker
+    command: python -m deep_agent.src.claude_code.temporal.worker
+    env_file:
+      - .env
+    environment:
+      - TEMPORAL_HOST=temporal:7233
+      - TEMPORAL_NAMESPACE=default
+      - TEMPORAL_TASK_QUEUE=claude-code-workers
+      - POSTGRES_HOST=pgvector
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=template_agent
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      temporal:
+        condition: service_started
+      pgvector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - agent-network
+
+  # ── Claude Code Sandbox ──────────────────────────────────────────────
+  # Note: claude-sandbox image must be built separately from
+  # /Users/nsaharan/Desktop/LoopEngineering/claude-sandbox/Containerfile
+  # Run: podman build -t claude-sandbox:v2.1.224 -f /path/to/Containerfile
 
 volumes:
   agent_pgvector_data:
     driver: local
   agent_redis_data:
+    driver: local
+  temporal_data:
     driver: local
 
 networks:

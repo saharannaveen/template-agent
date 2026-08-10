@@ -1,0 +1,124 @@
+# Quick-start use case cards for Loop Engineering
+# Displayed on the chat UI home page (WelcomeScreen.tsx)
+# Cards pre-fill prompts and set execution mode for common tasks
+
+quickstart_cards:
+  # ────────────────────────────────────────────────────────────────────
+  # Quick Tasks (Direct Mode)
+  # Simple, fast tasks that don't need full workflow checkpoints
+  # ────────────────────────────────────────────────────────────────────
+
+  - id: "fix-bug"
+    title: "Fix a Bug"
+    icon: "🐛"
+    description: "Paste a stack trace and I'll find the fix"
+    category: "quick"
+    mode: "direct"
+    prompt_template: "Fix this bug. Here's the error:\n\n{user_input}"
+    task_type: "bug_fix"
+    placeholder: "Paste your stack trace or error message..."
+
+  - id: "write-tests"
+    title: "Write Tests"
+    icon: "🧪"
+    description: "Generate test suite for any module"
+    category: "quick"
+    mode: "direct"
+    prompt_template: "Write comprehensive tests for: {user_input}"
+    task_type: "test_writing"
+    placeholder: "Enter module path or paste code..."
+
+  - id: "add-docs"
+    title: "Add Documentation"
+    icon: "📝"
+    description: "Generate docs from your code"
+    category: "quick"
+    mode: "direct"
+    prompt_template: "Generate documentation for: {user_input}"
+    task_type: "doc_writing"
+    placeholder: "Enter module or file path..."
+
+  # ────────────────────────────────────────────────────────────────────
+  # Build Features (Workflow Mode)
+  # Complex tasks with plan → design → implement → test flow
+  # ────────────────────────────────────────────────────────────────────
+
+  - id: "build-api"
+    title: "Build API Endpoint"
+    icon: "🚀"
+    description: "From spec to PR with tests and validation"
+    category: "build"
+    mode: "workflow"
+    prompt_template: "Build an API endpoint: {user_input}"
+    task_type: "implementation"
+    placeholder: "Describe the endpoint or paste a spec..."
+
+  - id: "refactor"
+    title: "Refactor Code"
+    icon: "🔄"
+    description: "Modernize endpoints, update patterns"
+    category: "build"
+    mode: "workflow"
+    prompt_template: "Refactor: {user_input}"
+    task_type: "refactor"
+    placeholder: "What needs refactoring?"
+
+  - id: "db-migration"
+    title: "Database Migration"
+    icon: "🗄️"
+    description: "Schema changes with safe migration scripts"
+    category: "build"
+    mode: "workflow"
+    prompt_template: "Create a database migration: {user_input}"
+    task_type: "implementation"
+    placeholder: "Describe the schema change..."
+
+  # ────────────────────────────────────────────────────────────────────
+  # Data & Analysis (Workflow Mode)
+  # Data analysis, audits, and quality checks
+  # ────────────────────────────────────────────────────────────────────
+
+  - id: "analyze-data"
+    title: "Analyze Data Product"
+    icon: "📈"
+    description: "Query, analyze, and visualize your data"
+    category: "analysis"
+    mode: "workflow"
+    prompt_template: "Analyze this data: {user_input}"
+    task_type: "planning"
+    placeholder: "What data question do you want answered?"
+
+  - id: "code-audit"
+    title: "Code Audit"
+    icon: "🔍"
+    description: "Security, performance, and quality review"
+    category: "analysis"
+    mode: "workflow"
+    prompt_template: "Audit this code for security, performance, and quality: {user_input}"
+    task_type: "design"
+    placeholder: "Enter repo, module, or file path..."
+
+  # ────────────────────────────────────────────────────────────────────
+  # Operations (Workflow Mode)
+  # Infrastructure, integrations, and service creation
+  # ────────────────────────────────────────────────────────────────────
+
+  - id: "system-integration"
+    title: "System Integration"
+    icon: "🔗"
+    description: "Connect services, write adapters"
+    category: "ops"
+    mode: "workflow"
+    prompt_template: "Create an integration between: {user_input}"
+    task_type: "implementation"
+    placeholder: "Which systems need connecting?"
+
+  - id: "create-microservice"
+    title: "Create Microservice"
+    icon: "📦"
+    description: "Full service from scratch with CI/CD"
+    category: "ops"
+    mode: "workflow"
+    prompt_template: "Create a new microservice: {user_input}"
+    task_type: "implementation"
+    placeholder: "Describe the service..."

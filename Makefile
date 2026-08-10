@@ -190,6 +190,25 @@ dev-restart: ## Restart dev stack
 dev-agent: ## Restart just the agent service
 	@export PODMAN_COMPOSE_SILENT=true && podman-compose -f compose.yaml --profile container restart template-agent
 
+# ---------------------------------------------------------------------------
+# Temporal (Loop Engineering) targets
+# ---------------------------------------------------------------------------
+
+dev-temporal: ## Start agent + deps + Temporal stack (detached, tail logs)
+	@echo "Starting agent stack with Temporal (pgvector, redis, template-agent, temporal, temporal-ui, temporal-worker)..."
+	@echo "Agent:       http://localhost:5002"
+	@echo "Temporal UI: http://localhost:8080"
+	@echo ""
+	@test -f .env || (echo "Creating .env from .env.example..." && cp .env.example .env)
+	@export PODMAN_COMPOSE_SILENT=true && podman-compose -f compose.yaml --profile container --profile temporal up --build -d
+	@echo ""
+	@echo "Tailing agent logs (Ctrl+C to stop)..."
+	@echo ""
+	@export PODMAN_COMPOSE_SILENT=true && podman-compose -f compose.yaml --profile container --profile temporal logs -f template-agent
+
+dev-temporal-down: ## Stop Temporal stack
+	@export PODMAN_COMPOSE_SILENT=true && podman-compose -f compose.yaml --profile container --profile temporal down
+
 # Deployment targets
 deploy:
 	@if [ "$(filter openshift,$(MAKECMDGOALS))" != "openshift" ] && [ "$(filter mpp,$(MAKECMDGOALS))" != "mpp" ]; then \

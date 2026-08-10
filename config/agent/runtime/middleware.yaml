@@ -1,0 +1,87 @@
+# Middleware configuration for Claude Code and Loop Engineering
+# This file adds support for sandboxed code execution with self-correction loops.
+
+defaults:
+  # Claude Code Execution Middleware
+  # Runs claude -p in isolated Podman containers (dev) or K8s Jobs (production)
+  claude_code:
+    enabled: true
+    runner: "podman"              # "podman" (local dev) | "k8s" (production)
+    image: "claude-sandbox:v2.1.224"  # pinned version, not :latest
+    timeout_seconds: 300          # max execution time per invocation
+    max_turns: 50                 # passed to claude -p --max-turns
+    max_output_bytes: 2097152     # 2MB output limit
+    streaming_enabled: true
+    max_concurrent_per_org: 3     # per-org concurrency limit
+    queue_timeout_seconds: 30.0   # max wait time for semaphore
+
+    # Authentication - uses Vertex AI by default
+    auth:
+      type: "vertex"              # "vertex" | "api_key" | "oauth"
+      # Project ID is read from ANTHROPIC_VERTEX_PROJECT_ID env var
+      vertex_project_id: "${ANTHROPIC_VERTEX_PROJECT_ID}"
+
+    # Container resources (K8s mode)
+    resource_requests:
+      cpu: "500m"
+      memory: "512Mi"
+    resource_limits:
+      cpu: "2000m"
+      memory: "2Gi"
+
+    # Sandbox security (K8s mode)
+    security:
+      read_only_rootfs: true
+      run_as_non_root: true
+      run_as_user: 1000
+      drop_capabilities: ["ALL"]
+      seccomp_profile: "RuntimeDefault"
+      network_policy: "allow_llm_api"   # "deny" | "allow_llm_api"
+
+    # Workspace configuration
+    workspace:
+      volume_type: "emptyDir"     # "emptyDir" | "pvc"
+      size_limit: "1Gi"
+      mount_path: "/workspace"
+      # Git integration (optional)
+      git:
+        clone_url: ""             # if set, init-container clones this repo
+        branch: ""                # branch to checkout
+        extract_diff_on_complete: true  # capture git diff after execution
+
+    # Cost governance
+    cost:
+      max_cost_usd_per_invocation: 5.0
+      max_cost_usd_per_loop: 25.0
+      pricing:                    # token → USD conversion
+        claude-opus-4-6:
+          input_per_mtok: 15.0
+          output_per_mtok: 75.0
+        claude-sonnet-4-5:
+          input_per_mtok: 3.0
+          output_per_mtok: 15.0
+
+    # Model routing by task type (cost optimization)
+    model_routing:
+      planning: "claude-sonnet-4-5"
+      design: "claude-opus-4-6"
+      implementation: "claude-opus-4-6"
+      test_writing: "claude-sonnet-4-5"
+      doc_writing: "claude-sonnet-4-5"
+      bug_fix: "claude-opus-4-6"
+      refactor: "claude-sonnet-4-5"
+      default: "claude-opus-4-6"
+
+  # Loop Engineering Middleware
+  # Wraps claude_code with test-fail-fix loops and human-in-the-loop checkpoints
+  loop_engineering:
+    enabled: false
+    max_iterations: 5             # max self-correction loops
+    checkpoints:
+      plan_review: true           # pause after planning, ask user to approve
+      design_review: true         # pause after design, ask user to review
+      pre_implement: false        # pause before implementation starts
+      on_struggle: true           # pause after N consecutive failures
+    struggle_threshold: 3         # trigger struggle alert after this many failures
+    error_context_max_chars: 2000 # max chars of error output to feed back
+    max_session_reuse_iterations: 3  # start fresh session after this many --resume calls

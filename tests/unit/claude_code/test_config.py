@@ -124,6 +124,53 @@ class TestClaudeCodeConfigValidation:
             ClaudeCodeConfig(runner="docker")
 
 
+class TestModelRoutingConfig:
+    def test_defaults(self):
+        from deep_agent.src.claude_code.config import ClaudeCodeModelRoutingConfig
+
+        cfg = ClaudeCodeModelRoutingConfig()
+        assert cfg.planning == "claude-sonnet-4-5"
+        assert cfg.design == "claude-opus-4-6"
+        assert cfg.implementation == "claude-opus-4-6"
+        assert cfg.test_writing == "claude-sonnet-4-5"
+        assert cfg.doc_writing == "claude-sonnet-4-5"
+        assert cfg.bug_fix == "claude-opus-4-6"
+        assert cfg.refactor == "claude-sonnet-4-5"
+        assert cfg.default == "claude-opus-4-6"
+
+    def test_get_model_known_type(self):
+        from deep_agent.src.claude_code.config import ClaudeCodeModelRoutingConfig
+
+        cfg = ClaudeCodeModelRoutingConfig()
+        assert cfg.get_model("test_writing") == "claude-sonnet-4-5"
+        assert cfg.get_model("implementation") == "claude-opus-4-6"
+
+    def test_get_model_unknown_type_returns_default(self):
+        from deep_agent.src.claude_code.config import ClaudeCodeModelRoutingConfig
+
+        cfg = ClaudeCodeModelRoutingConfig()
+        assert cfg.get_model("unknown_type") == "claude-opus-4-6"
+
+    def test_config_has_model_routing(self):
+        from deep_agent.src.claude_code.config import ClaudeCodeConfig
+
+        cfg = ClaudeCodeConfig()
+        assert cfg.model_routing.default == "claude-opus-4-6"
+        assert cfg.model_routing.test_writing == "claude-sonnet-4-5"
+
+    def test_override_model_routing(self):
+        from deep_agent.src.claude_code.config import ClaudeCodeConfig
+
+        cfg = ClaudeCodeConfig.model_validate({
+            "model_routing": {
+                "test_writing": "claude-opus-4-6",
+                "default": "claude-sonnet-4-5",
+            }
+        })
+        assert cfg.model_routing.test_writing == "claude-opus-4-6"
+        assert cfg.model_routing.default == "claude-sonnet-4-5"
+
+
 class TestLoopEngineeringConfigDefaults:
     def test_defaults(self):
         from deep_agent.src.claude_code.config import LoopEngineeringConfig

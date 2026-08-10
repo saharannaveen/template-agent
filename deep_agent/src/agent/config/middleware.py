@@ -19,6 +19,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from deep_agent.src.code_execution.config import CodeExecutionConfig
+from deep_agent.src.claude_code.config import ClaudeCodeConfig, LoopEngineeringConfig
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
@@ -150,6 +151,8 @@ class MiddlewareDefaults(BaseModel):
     dynamic_subagents: DynamicSubagentConfig = Field(
         default_factory=DynamicSubagentConfig
     )
+    claude_code: ClaudeCodeConfig = Field(default_factory=ClaudeCodeConfig)
+    loop_engineering: LoopEngineeringConfig = Field(default_factory=LoopEngineeringConfig)
 
 
 class ProfileConfig(BaseModel):
@@ -189,6 +192,8 @@ class ResolvedMiddlewareConfig(BaseModel):
     dynamic_subagents: DynamicSubagentConfig = Field(
         default_factory=DynamicSubagentConfig
     )
+    claude_code: ClaudeCodeConfig = Field(default_factory=ClaudeCodeConfig)
+    loop_engineering: LoopEngineeringConfig = Field(default_factory=LoopEngineeringConfig)
 
 
 def load_middleware_config(config_path: Path) -> MiddlewareFileConfig:
@@ -279,6 +284,16 @@ def resolve_middleware(
             overrides["dynamic_subagents"]
         )
 
+    claude_code = defaults.claude_code
+    if isinstance(overrides.get("claude_code"), dict):
+        claude_code = ClaudeCodeConfig.model_validate(overrides["claude_code"])
+
+    loop_engineering = defaults.loop_engineering
+    if isinstance(overrides.get("loop_engineering"), dict):
+        loop_engineering = LoopEngineeringConfig.model_validate(
+            overrides["loop_engineering"]
+        )
+
     return ResolvedMiddlewareConfig(
         summarization_tool_enabled=summarization_enabled,
         human_approval=human_approval,
@@ -296,6 +311,8 @@ def resolve_middleware(
         excluded_middleware=profile.excluded_middleware,
         code_execution=code_execution,
         dynamic_subagents=dynamic_subagents,
+        claude_code=claude_code,
+        loop_engineering=loop_engineering,
     )
 
 

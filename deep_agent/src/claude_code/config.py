@@ -61,6 +61,23 @@ class ClaudeCodeCostConfig(BaseModel):
     )
 
 
+class ClaudeCodeModelRoutingConfig(BaseModel):
+    """Route to different models based on task type to optimize cost."""
+
+    planning: str = "claude-sonnet-4-5"
+    design: str = "claude-opus-4-6"
+    implementation: str = "claude-opus-4-6"
+    test_writing: str = "claude-sonnet-4-5"
+    doc_writing: str = "claude-sonnet-4-5"
+    bug_fix: str = "claude-opus-4-6"
+    refactor: str = "claude-sonnet-4-5"
+    default: str = "claude-opus-4-6"
+
+    def get_model(self, task_type: str) -> str:
+        """Get the model for a given task type."""
+        return getattr(self, task_type, self.default)
+
+
 class ClaudeCodeConfig(BaseModel):
     """Configuration for Claude Code sandbox execution."""
 
@@ -86,6 +103,9 @@ class ClaudeCodeConfig(BaseModel):
         default_factory=ClaudeCodeWorkspaceConfig
     )
     cost: ClaudeCodeCostConfig = Field(default_factory=ClaudeCodeCostConfig)
+    model_routing: ClaudeCodeModelRoutingConfig = Field(
+        default_factory=ClaudeCodeModelRoutingConfig
+    )
 
 
 class LoopEngineeringConfig(BaseModel):

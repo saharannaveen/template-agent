@@ -8,6 +8,7 @@ import os
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Any
 
 from deep_agent.src.claude_code.config import ClaudeCodeConfig
 
@@ -101,8 +102,12 @@ class ClaudeCodeResult:
             return 0.0
 
         model_pricing = pricing[self.model]
-        input_cost = (self.input_tokens / 1_000_000) * model_pricing.get("input_per_mtok", 15.0)
-        output_cost = (self.output_tokens / 1_000_000) * model_pricing.get("output_per_mtok", 75.0)
+        input_cost = (self.input_tokens / 1_000_000) * model_pricing.get(
+            "input_per_mtok", 15.0
+        )
+        output_cost = (self.output_tokens / 1_000_000) * model_pricing.get(
+            "output_per_mtok", 75.0
+        )
 
         return input_cost + output_cost
 
@@ -139,20 +144,24 @@ class BaseClaudeCodeRunner(ABC):
         allowed_tools: list[str] | None = None,
         session_id: str | None = None,
         model: str | None = None,
+        permission_mode: str | None = None,
     ) -> list[str]:
         """Build base CLI arguments for Claude Code.
 
-        Always includes: -p, --output-format json, --bare,
-        --dangerously-skip-permissions, --max-turns
+        Always includes: -p, --output-format json, --bare, --max-turns
+        Permission mode: bypassPermissions (default for backward compat),
+          acceptEdits, auto, manual
         Optional: --allowedTools, --resume, --model
         Last arg: prompt
         """
+        mode = permission_mode or "bypassPermissions"
         args = [
             "-p",
             "--output-format",
             "json",
             "--bare",
-            "--dangerously-skip-permissions",
+            "--permission-mode",
+            mode,
             "--max-turns",
             str(self.config.max_turns),
         ]
@@ -181,11 +190,15 @@ class PodmanClaudeCodeRunner(BaseClaudeCodeRunner):
         if self.config.auth.type == "vertex":
             env_args.extend(["-e", "CLAUDE_CODE_USE_VERTEX=1"])
             # Fall back to environment variable if config value is empty
-            project_id = self.config.auth.vertex_project_id or os.environ.get("ANTHROPIC_VERTEX_PROJECT_ID", "")
-            env_args.extend([
-                "-e",
-                f"ANTHROPIC_VERTEX_PROJECT_ID={project_id}",
-            ])
+            project_id = self.config.auth.vertex_project_id or os.environ.get(
+                "ANTHROPIC_VERTEX_PROJECT_ID", ""
+            )
+            env_args.extend(
+                [
+                    "-e",
+                    f"ANTHROPIC_VERTEX_PROJECT_ID={project_id}",
+                ]
+            )
 
             # Mount GCP ADC if file exists
             gcp_adc_path = os.path.expanduser(
@@ -193,7 +206,9 @@ class PodmanClaudeCodeRunner(BaseClaudeCodeRunner):
             )
             if os.path.exists(gcp_adc_path):
                 container_adc_path = "/gcp/application_default_credentials.json"
-                env_args.extend(["-e", f"GOOGLE_APPLICATION_CREDENTIALS={container_adc_path}"])
+                env_args.extend(
+                    ["-e", f"GOOGLE_APPLICATION_CREDENTIALS={container_adc_path}"]
+                )
                 env_args.extend(["-v", f"{gcp_adc_path}:{container_adc_path}:ro"])
 
         elif self.config.auth.type == "api_key":
@@ -204,8 +219,10 @@ class PodmanClaudeCodeRunner(BaseClaudeCodeRunner):
             oauth_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
             env_args.extend(["-e", f"CLAUDE_CODE_OAUTH_TOKEN={oauth_token}"])
 
-        # Pass through integration tokens if available
+        # Git credentials — priority: env var > gh CLI > SSH keys
         github_token = os.environ.get("GITHUB_TOKEN", "")
+        if not github_token:
+            github_token = self._get_gh_token()
         if github_token:
             env_args.extend(["-e", f"GITHUB_TOKEN={github_token}"])
 
@@ -213,14 +230,72 @@ class PodmanClaudeCodeRunner(BaseClaudeCodeRunner):
         if gitlab_token:
             env_args.extend(["-e", f"GITLAB_TOKEN={gitlab_token}"])
 
+        # Git user config passed as env vars (entrypoint sets up .gitconfig)
+        git_name = os.environ.get("GIT_AUTHOR_NAME", "")
+        git_email = os.environ.get("GIT_AUTHOR_EMAIL", "")
+        if not git_name:
+            import subprocess as sp
+
+            try:
+                git_name = sp.run(
+                    ["git", "config", "user.name"],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                ).stdout.strip()
+                git_email = sp.run(
+                    ["git", "config", "user.email"],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                ).stdout.strip()
+            except Exception:
+                pass
+        if git_name:
+            env_args.extend(
+                [
+                    "-e",
+                    f"GIT_AUTHOR_NAME={git_name}",
+                    "-e",
+                    f"GIT_COMMITTER_NAME={git_name}",
+                ]
+            )
+        if git_email:
+            env_args.extend(
+                [
+                    "-e",
+                    f"GIT_AUTHOR_EMAIL={git_email}",
+                    "-e",
+                    f"GIT_COMMITTER_EMAIL={git_email}",
+                ]
+            )
+
         return env_args
 
     @staticmethod
+    def _get_gh_token() -> str:
+        """Get GitHub token from gh CLI if authenticated."""
+        import subprocess as sp
+
+        try:
+            result = sp.run(
+                ["gh", "auth", "token"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+        except (FileNotFoundError, sp.TimeoutExpired):
+            pass
+        return ""
+
     @staticmethod
     def _extract_repo_url(prompt: str) -> tuple[str, str]:
         """Extract GitHub/GitLab repo URL and branch from prompt."""
-        import re
-        url_match = re.search(r'https://(?:github\.com|gitlab\.com)/[\w\-\.]+/[\w\-\.]+(?:\.git)?', prompt)
+        url_match = re.search(
+            r"https://(?:github\.com|gitlab\.com)/[\w\-\.]+/[\w\-\.]+(?:\.git)?", prompt
+        )
         repo_url = url_match.group(0) if url_match else ""
         # Try multiple branch patterns
         branch = ""
@@ -234,7 +309,7 @@ class PodmanClaudeCodeRunner(BaseClaudeCodeRunner):
             m = re.search(pat, prompt, re.IGNORECASE)
             if m:
                 branch = m.group(1)
-                if branch not in ('from', 'to', 'the', 'a', 'in', 'on'):
+                if branch not in ("from", "to", "the", "a", "in", "on"):
                     break
                 branch = ""
         return repo_url, branch
@@ -344,10 +419,19 @@ class PodmanClaudeCodeRunner(BaseClaudeCodeRunner):
         if task_type:
             model = self.config.model_routing.get_model(task_type)
 
-        cmd = self._build_command(prompt, workspace_path, allowed_tools, session_id, model, repo_url, repo_branch)
+        cmd = self._build_command(
+            prompt,
+            workspace_path,
+            allowed_tools,
+            session_id,
+            model,
+            repo_url,
+            repo_branch,
+        )
 
         # Execute with timeout
         import time
+
         start_time = time.time()
 
         try:
@@ -387,13 +471,28 @@ class PodmanClaudeCodeRunner(BaseClaudeCodeRunner):
                 model="",
             )
 
-    async def create_session(self, session_id: str, workspace_path: str) -> str:
+    async def create_session(
+        self,
+        session_id: str,
+        workspace_path: str,
+        repo_url: str = "",
+        repo_branch: str = "",
+        feature_branch: str = "",
+    ) -> str:
         """Create a persistent container (not --rm). Returns container name."""
         cmd = ["podman", "run", "-d", "--name", f"claude-session-{session_id}"]
         cmd.extend(self._build_env_args())
+        if repo_url:
+            cmd.extend(["-e", f"REPO_URL={repo_url}"])
+            if repo_branch:
+                cmd.extend(["-e", f"REPO_BRANCH={repo_branch}"])
+            if feature_branch:
+                cmd.extend(["-e", f"FEATURE_BRANCH={feature_branch}"])
         cmd.extend(["-v", f"{workspace_path}:/workspace"])
         cmd.append(self.config.image)
-        cmd.extend(["sleep", "infinity"])  # keep alive
+        cmd.extend(
+            ["sleep", "infinity"]
+        )  # keep alive; entrypoint sets up git, then passes through to sleep
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -401,7 +500,7 @@ class PodmanClaudeCodeRunner(BaseClaudeCodeRunner):
             stderr=asyncio.subprocess.PIPE,
         )
         stdout, _ = await proc.communicate()
-        container_id = stdout.decode().strip()
+        stdout.decode().strip()  # container ID (not used, name is deterministic)
         return f"claude-session-{session_id}"
 
     async def execute_in_session(
@@ -409,16 +508,38 @@ class PodmanClaudeCodeRunner(BaseClaudeCodeRunner):
         container_name: str,
         prompt: str,
         task_type: str | None = None,
+        permission_mode: str | None = None,
+        on_stream_event: Any | None = None,
     ) -> ClaudeCodeResult:
-        """Execute claude -p inside an EXISTING container using podman exec."""
+        """Execute claude -p inside an EXISTING container using podman exec.
+
+        Args:
+            container_name: Name of the running Podman container.
+            prompt: Task prompt to send to Claude Code.
+            task_type: Optional task type for model routing.
+            permission_mode: Optional CLI permission level for Claude Code.
+            on_stream_event: Optional async callback(event_dict) called for each
+                stream-json line. Used for real-time streaming to Redis/UI.
+        """
         model = None
         if task_type:
             model = self.config.model_routing.get_model(task_type)
 
-        args = self._build_base_args(prompt, None, None, model)
+        args = self._build_base_args(
+            prompt, None, None, model, permission_mode=permission_mode
+        )
+
+        # Use stream-json for real-time output if callback provided
+        if on_stream_event:
+            args = [a for a in args if a != "json"]
+            idx = args.index("--output-format") if "--output-format" in args else -1
+            if idx >= 0 and idx + 1 < len(args):
+                args[idx + 1] = "stream-json"
+
         cmd = ["podman", "exec", container_name, "claude"] + args
 
         import time
+
         start_time = time.time()
 
         try:
@@ -428,14 +549,75 @@ class PodmanClaudeCodeRunner(BaseClaudeCodeRunner):
                 stderr=asyncio.subprocess.PIPE,
             )
 
-            # Wait with timeout
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(),
-                timeout=self.config.timeout_seconds,
-            )
+            if on_stream_event and proc.stdout:
+                # Stream mode: read line by line, publish each event
+                import json as _json
 
-            duration = time.time() - start_time
-            return self._parse_result(stdout, stderr, proc.returncode or 0, duration)
+                collected_lines = []
+                last_result = None
+
+                try:
+
+                    async def read_stream():
+                        nonlocal last_result
+                        async for raw_line in proc.stdout:
+                            line = raw_line.decode("utf-8", errors="replace").strip()
+                            if not line:
+                                continue
+                            collected_lines.append(line)
+                            try:
+                                event = _json.loads(line)
+                                await on_stream_event(event)
+                                if event.get("type") == "result":
+                                    last_result = event
+                            except (ValueError, TypeError):
+                                pass
+
+                    await asyncio.wait_for(
+                        read_stream(), timeout=self.config.timeout_seconds
+                    )
+                except asyncio.TimeoutError:
+                    proc.kill()
+                    await proc.wait()
+
+                await proc.wait()
+                duration = time.time() - start_time
+
+                # Build result from the collected stream
+                if last_result:
+                    return ClaudeCodeResult(
+                        output=last_result.get("result", ""),
+                        session_id=last_result.get("session_id", ""),
+                        exit_code=proc.returncode or 0,
+                        is_error=last_result.get("is_error", False),
+                        duration_seconds=duration,
+                        raw_json=last_result,
+                        input_tokens=last_result.get("usage", {}).get(
+                            "input_tokens", 0
+                        ),
+                        output_tokens=last_result.get("usage", {}).get(
+                            "output_tokens", 0
+                        ),
+                        cache_read_tokens=0,
+                        cache_creation_tokens=0,
+                        model=model or "",
+                    )
+                else:
+                    full_output = "\n".join(collected_lines)
+                    return self._parse_result(
+                        full_output.encode(), b"", proc.returncode or 0, duration
+                    )
+            else:
+                # Non-streaming: wait for full output
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(),
+                    timeout=self.config.timeout_seconds,
+                )
+
+                duration = time.time() - start_time
+                return self._parse_result(
+                    stdout, stderr, proc.returncode or 0, duration
+                )
 
         except asyncio.TimeoutError:
             # Don't kill the container — just kill the exec process
@@ -461,7 +643,9 @@ class PodmanClaudeCodeRunner(BaseClaudeCodeRunner):
     async def stop_session(self, container_name: str) -> None:
         """Stop a persistent container (hibernate)."""
         proc = await asyncio.create_subprocess_exec(
-            "podman", "stop", container_name,
+            "podman",
+            "stop",
+            container_name,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -470,7 +654,9 @@ class PodmanClaudeCodeRunner(BaseClaudeCodeRunner):
     async def start_session(self, container_name: str) -> None:
         """Restart a stopped container (resume from hibernate)."""
         proc = await asyncio.create_subprocess_exec(
-            "podman", "start", container_name,
+            "podman",
+            "start",
+            container_name,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -480,13 +666,17 @@ class PodmanClaudeCodeRunner(BaseClaudeCodeRunner):
         """Remove a container completely."""
         # Stop container first
         await asyncio.create_subprocess_exec(
-            "podman", "stop", container_name,
+            "podman",
+            "stop",
+            container_name,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         # Remove container
         proc = await asyncio.create_subprocess_exec(
-            "podman", "rm", container_name,
+            "podman",
+            "rm",
+            container_name,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

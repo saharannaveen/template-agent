@@ -98,7 +98,23 @@ class ChatUINotifier:
             )
         except Exception as e:
             logger.error(f"Failed to publish to Redis: {e}")
-            # Don't raise — notification failures shouldn't break workflows
+
+        # Persist to notification store so GET /api/notifications returns data
+        try:
+            from deep_agent.src.claude_code.notification_store import NotificationStore
+
+            store = NotificationStore()
+            await store.add(
+                user_id=user_id,
+                notification_type=notification.type,
+                workflow_id=notification.workflow_id,
+                task_name=notification.task_name,
+                message=notification.message,
+                data=notification.data,
+                url=f"/workflows/{notification.workflow_id}",
+            )
+        except Exception as e:
+            logger.warning(f"Failed to persist notification to store: {e}")
 
     async def close(self) -> None:
         """Close Redis connection."""

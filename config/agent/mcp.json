@@ -1,8 +1,8 @@
 {
     "mcpServers": {
         "template-mcp-server": {
-            "url": "http://localhost:5001/mcp",
-            // "url": "http://host.containers.internal:5001/mcp",
+            // "url": "http://localhost:5001/mcp",
+            "url": "http://host.containers.internal:5001/mcp",
             "transport": "streamable_http",
             "enabled": true,
             "auth": true,
@@ -27,6 +27,21 @@
                 "registration_endpoint": "http://localhost:5001/auth/register",
                 // "registration_endpoint": "http://host.containers.internal:5001/auth/register",
                 "scopes": ["email", "openid", "profile", "session:role-any"]
+            }
+        },
+        "atlassian-jira": {
+            "url": "https://mcp.atlassian.com/v1/mcp/authv2",
+            "transport": "streamable_http",
+            "enabled": true,
+            "auth": true,
+            "auth_mode": "dcr",
+            "ssl_verify": true,
+            "timeout": 30,
+            "oauth": {
+                "authorization_endpoint": "https://mcp.atlassian.com/v1/authorize",
+                "token_endpoint": "https://cf.mcp.atlassian.com/v1/token",
+                "registration_endpoint": "https://cf.mcp.atlassian.com/v1/register",
+                "scopes": ["read", "write"]
             }
         },
         "template-mcp-server-api-key": {

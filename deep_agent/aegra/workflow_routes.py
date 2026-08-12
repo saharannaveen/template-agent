@@ -62,10 +62,12 @@ async def _send_workflow_signal(workflow_id: str, response: dict[str, Any]) -> N
         RuntimeError: If Temporal is not available
     """
     try:
+        import os
+
         from temporalio.client import Client
 
-        # Attempt to connect to Temporal
-        client = await Client.connect("localhost:7233")
+        temporal_host = os.environ.get("TEMPORAL_HOST", "localhost:7233")
+        client = await Client.connect(temporal_host)
 
         # Send signal to workflow
         handle = client.get_workflow_handle(workflow_id)
@@ -109,6 +111,7 @@ async def get_workflows(request: Request) -> dict[str, Any]:
 
     # In dev mode, show all workflows (user_id mismatch between anonymous and dev-user)
     from deep_agent.aegra.auth import ENABLE_AUTH
+
     workflows = await store.get_all(None if not ENABLE_AUTH else user_id)
 
     logger.info(
@@ -142,8 +145,10 @@ async def get_workflow_detail(workflow_id: str, request: Request) -> dict[str, A
         )
         raise HTTPException(status_code=404, detail="Workflow not found")
 
-    # Verify ownership
-    if workflow.get("user_id") != user_id:
+    # Verify ownership (skip in dev mode)
+    from deep_agent.aegra.auth import ENABLE_AUTH
+
+    if ENABLE_AUTH and workflow.get("user_id") != user_id:
         logger.warning(
             "workflow_access_denied",
             workflow_id=workflow_id,
@@ -182,8 +187,10 @@ async def workflow_action(
         )
         raise HTTPException(status_code=404, detail="Workflow not found")
 
-    # Verify ownership
-    if workflow.get("user_id") != user_id:
+    # Verify ownership (skip in dev mode)
+    from deep_agent.aegra.auth import ENABLE_AUTH
+
+    if ENABLE_AUTH and workflow.get("user_id") != user_id:
         logger.warning(
             "workflow_action_access_denied",
             workflow_id=workflow_id,
@@ -265,8 +272,10 @@ async def respond_to_workflow(
         )
         raise HTTPException(status_code=404, detail="Workflow not found")
 
-    # Verify ownership
-    if workflow.get("user_id") != user_id:
+    # Verify ownership (skip in dev mode)
+    from deep_agent.aegra.auth import ENABLE_AUTH
+
+    if ENABLE_AUTH and workflow.get("user_id") != user_id:
         logger.warning(
             "workflow_respond_access_denied",
             workflow_id=workflow_id,

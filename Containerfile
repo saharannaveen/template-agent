@@ -14,6 +14,8 @@ USER root
 
 COPY pyproject.toml /app/pyproject.toml
 
+RUN dnf install -y gcc python3-devel && dnf clean all
+
 RUN pip install --no-cache-dir uv && \
     uv venv /app/.venv && \
     uv pip install --python /app/.venv/bin/python -r pyproject.toml && \

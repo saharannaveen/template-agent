@@ -35,17 +35,29 @@ def _build_execute_code_tool(config: CodeExecutionConfig) -> Any:
         network: bool = False,
         input_files: dict[str, str] | None = None,
     ) -> str:
-        """Execute code in an isolated sandbox environment.
+        """Execute a SHORT code snippet in an ephemeral sandbox. NO file persistence.
+
+        USE THIS ONLY FOR:
+        - Quick calculations (math, data transforms)
+        - One-off scripts (parse JSON, format data)
+        - Simple API calls
+
+        DO NOT USE FOR (use claude_code instead):
+        - Git clone, commit, push — use claude_code
+        - Multi-file code changes — use claude_code
+        - Building features, fixing bugs — use claude_code
+        - Anything that needs a persistent workspace — use claude_code
+        - Anything involving a repository — use claude_code
 
         Args:
-            code: The source code to execute.
-            language: Programming language (python, python-ds, python-ml, shell, node).
-            timeout: Maximum execution time in seconds.
-            network: Whether to allow internet access from the sandbox.
-            input_files: Optional dict of filename to content, mounted at /input/.
+            code: Short code snippet to execute.
+            language: python, shell, or node.
+            timeout: Max execution time in seconds.
+            network: Allow internet access.
+            input_files: Dict of filename to content, mounted at /input/.
 
         Returns:
-            Execution output with stdout, stderr, and exit code.
+            stdout, stderr, and exit code.
         """
         return "This tool is handled by CodeExecutionMiddleware"
 
@@ -58,10 +70,28 @@ class CodeExecutionMiddleware(AgentMiddleware):
     def __init__(self, *, config: CodeExecutionConfig) -> None:
         """Initialize middleware with execution configuration."""
         self._config = config
-        self._runner = K8sJobRunner(config)
+        self._k8s_available = self._detect_k8s()
+        if self._k8s_available:
+            self._runner = K8sJobRunner(config)
+        else:
+            self._runner = None
+        from deep_agent.src.code_execution.podman_runner import PodmanCodeRunner
+
+        self._podman_runner = PodmanCodeRunner(config)
         self._metrics = CodeExecutionMetrics()
         self._execute_code_tool = _build_execute_code_tool(config)
         self._semaphores: dict[str, asyncio.Semaphore] = {}
+
+    @staticmethod
+    def _detect_k8s() -> bool:
+        """Check if running inside a K8s cluster."""
+        try:
+            from kubernetes import config as k8s_config
+
+            k8s_config.load_incluster_config()
+            return True
+        except Exception:
+            return False
 
     def _get_semaphore(self, org: str) -> asyncio.Semaphore:
         """Get or create a per-org execution semaphore."""
@@ -85,6 +115,23 @@ class CodeExecutionMiddleware(AgentMiddleware):
             return await handler(request)
         updated = request.override(tools=[*request.tools, self._execute_code_tool])
         return await handler(updated)
+
+    async def _run_via_podman(
+        self, language: str, code: str, timeout: int, tool_call_id: str
+    ) -> ToolMessage:
+        """Execute code via Podman container (local dev)."""
+        result = await self._podman_runner.execute(language, code, timeout)
+
+        parts = []
+        if result.stdout:
+            parts.append(f"stdout:\n{result.stdout}")
+        if result.stderr:
+            parts.append(f"stderr:\n{result.stderr}")
+        parts.append(f"exit_code: {result.exit_code}")
+        if result.timed_out:
+            parts.append(f"(timed out after {timeout}s)")
+
+        return ToolMessage(content="\n".join(parts), tool_call_id=tool_call_id)
 
     def wrap_tool_call(self, request: ToolCallRequest, handler: Any) -> Any:
         """Synchronous tool call pass-through."""
@@ -138,6 +185,9 @@ class CodeExecutionMiddleware(AgentMiddleware):
 
         if network and self._config.network_access == "deny":
             network = False
+
+        if not self._k8s_available:
+            return await self._run_via_podman(language, code, timeout, tool_call_id)
 
         org = os.environ.get("AI_PLATFORM_AGENT_ORG", "default")
         namespace = self._runner.resolve_namespace()

@@ -1,0 +1,9 @@
+[project]
+name = "nooa-template-agent"
+version = "0.1.0"
+description = "Template agent built with NVIDIA NOOA (Object-Oriented Agents) framework"
+readme = "README.md"
+requires-python = ">=3.12.2"
+dependencies = [
+    "nooa>=0.0.8",
+]

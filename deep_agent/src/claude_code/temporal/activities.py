@@ -13,9 +13,9 @@ except ImportError:
     TEMPORAL_AVAILABLE = False
 
     # Mock activity decorator when temporalio is not installed
-    class activity:
+    class activity:  # noqa: D101
         @staticmethod
-        def defn(func):
+        def defn(func):  # noqa: D102
             return func
 
 
@@ -28,8 +28,7 @@ logger = logging.getLogger(__name__)
 
 @activity.defn
 async def estimate_cost_activity(task: dict[str, Any]) -> dict[str, Any]:
-    """
-    Estimate cost for a Claude Code task.
+    """Estimate cost for a Claude Code task.
 
     Wraps the Phase 1 cost_estimator.estimate_cost() function.
 
@@ -52,12 +51,15 @@ async def estimate_cost_activity(task: dict[str, Any]) -> dict[str, Any]:
     logger.info("Estimating cost for task: %s", task.get("prompt", "")[:100])
 
     # Use default pricing if not provided
-    pricing = task.get("pricing", {
-        "claude-opus-4-6": {
-            "input_per_mtok": 15.0,
-            "output_per_mtok": 75.0,
+    pricing = task.get(
+        "pricing",
+        {
+            "claude-opus-4-6": {
+                "input_per_mtok": 15.0,
+                "output_per_mtok": 75.0,
+            },
         },
-    })
+    )
 
     max_iterations = task.get("max_iterations", 5)
 
@@ -67,15 +69,19 @@ async def estimate_cost_activity(task: dict[str, Any]) -> dict[str, Any]:
         max_iterations=max_iterations,
     )
 
-    logger.info("Cost estimate: %s, $%.2f-$%.2f", result["complexity"], result["estimated_cost_low"], result["estimated_cost_high"])
+    logger.info(
+        "Cost estimate: %s, $%.2f-$%.2f",
+        result["complexity"],
+        result["estimated_cost_low"],
+        result["estimated_cost_high"],
+    )
 
     return result
 
 
 @activity.defn
 async def run_claude_code_activity(args: dict[str, Any]) -> dict[str, Any]:
-    """
-    Execute Claude Code in a sandbox.
+    """Execute Claude Code in a sandbox.
 
     Wraps the Phase 1 PodmanClaudeCodeRunner.execute() method.
 
@@ -127,18 +133,23 @@ async def run_claude_code_activity(args: dict[str, Any]) -> dict[str, Any]:
     os.makedirs(claude_dir, exist_ok=True)
     if os.path.isdir(memory_dir):
         import shutil
+
         for f in os.listdir(memory_dir):
             src = os.path.join(memory_dir, f)
             if os.path.isfile(src):
                 shutil.copy2(src, os.path.join(claude_dir, f))
-        logger.info("Injected %d memory files for user %s", len(os.listdir(memory_dir)), user_id)
+        logger.info(
+            "Injected %d memory files for user %s", len(os.listdir(memory_dir)), user_id
+        )
 
     # Create CLAUDE.md with project instructions
     claude_md = os.path.join(workspace_path, "CLAUDE.md")
     with open(claude_md, "w") as f:
         f.write("# Loop Engineering Agent\n\n")
         f.write("You are an autonomous coding agent running in an isolated sandbox.\n")
-        f.write("Git credentials are pre-configured. Clone, commit, and push directly.\n")
+        f.write(
+            "Git credentials are pre-configured. Clone, commit, and push directly.\n"
+        )
         f.write("Always run tests before pushing. Follow the user's coding style.\n")
         f.write(f"User: {user_id}\n")
 
@@ -165,12 +176,17 @@ async def run_claude_code_activity(args: dict[str, Any]) -> dict[str, Any]:
                 src = os.path.join(sandbox_memory, f)
                 if os.path.isfile(src):
                     import shutil
+
                     shutil.copy2(src, os.path.join(memory_dir, f))
-            logger.info("Extracted %d memory files from sandbox for user %s",
-                        len(os.listdir(sandbox_memory)), user_id)
+            logger.info(
+                "Extracted %d memory files from sandbox for user %s",
+                len(os.listdir(sandbox_memory)),
+                user_id,
+            )
 
         # Cleanup workspace
         import shutil
+
         shutil.rmtree(workspace_path, ignore_errors=True)
 
     # Compute cost using config pricing
@@ -207,8 +223,7 @@ async def notify_user_activity(
     data: dict[str, Any],
     cumulative_cost: float,
 ) -> None:
-    """
-    Notify user via all configured channels.
+    """Notify user via all configured channels.
 
     Dispatches to:
     - Chat UI via SSE/Redis
@@ -256,9 +271,7 @@ async def notify_user_activity(
         channels=NotificationChannelsConfig(
             chat_ui={
                 "enabled": True,
-                "redis_url": os.environ.get(
-                    "REDIS_URL", "redis://localhost:6379/0"
-                ),
+                "redis_url": os.environ.get("REDIS_URL", "redis://localhost:6379/0"),
             },
             slack={
                 "enabled": bool(os.environ.get("SLACK_BOT_TOKEN")),
@@ -278,6 +291,37 @@ async def notify_user_activity(
     router = NotificationRouter(config)
     await router.notify(notification)
 
+    # Update WorkflowStore so GET /api/workflows returns data
+    try:
+        from deep_agent.src.claude_code.workflow_store import WorkflowStore
+
+        store = WorkflowStore()
+        workflow_id = data.get("workflow_id", "")
+        status = data.get("status", "running")
+        phase = data.get("phase", data.get("status", "unknown"))
+        user_id = data.get("user_id", "anonymous")
+        thread_id = data.get("thread_id", "")
+        iteration = data.get("iteration", 0)
+
+        existing = await store.get(workflow_id)
+        if existing is None and workflow_id:
+            await store.register(
+                workflow_id=workflow_id,
+                task_name=data.get("task_name", "task"),
+                user_id=user_id,
+                thread_id=thread_id or None,
+            )
+        if workflow_id:
+            await store.update_status(
+                workflow_id=workflow_id,
+                status=status,
+                phase=phase,
+                cost=cumulative_cost,
+                iterations=iteration if iteration else None,
+            )
+    except Exception as e:
+        logger.warning("Failed to update WorkflowStore: %s", e)
+
     logger.info("User notification sent: %s", event_type)
 
 
@@ -288,6 +332,7 @@ async def post_result_to_chat_activity(args: dict[str, Any]) -> None:
         raise RuntimeError("Temporal SDK not installed")
 
     import os
+
     import httpx
 
     thread_id = args.get("thread_id", "")
@@ -320,21 +365,20 @@ async def post_result_to_chat_activity(args: dict[str, Any]) -> None:
                 f"{agent_url}/threads/{thread_id}/runs",
                 json={
                     "assistant_id": "agent",
-                    "input": {
-                        "messages": [{"role": "assistant", "content": message}]
-                    },
+                    "input": {"messages": [{"role": "assistant", "content": message}]},
                 },
                 timeout=10.0,
             )
-            logger.info("Posted result to thread %s: status=%d", thread_id, resp.status_code)
+            logger.info(
+                "Posted result to thread %s: status=%d", thread_id, resp.status_code
+            )
     except Exception as e:
         logger.error("Failed to post result to chat: %s", e)
 
 
 @activity.defn
 async def create_sandbox_activity(session: dict[str, Any]) -> dict[str, Any]:
-    """
-    Create a persistent sandbox container for a coding session.
+    """Create a persistent sandbox container for a coding session.
 
     Args:
         session: Dict with keys:
@@ -373,18 +417,25 @@ async def create_sandbox_activity(session: dict[str, Any]) -> dict[str, Any]:
     os.makedirs(claude_dir, exist_ok=True)
     if os.path.isdir(memory_dir):
         import shutil
+
         for f in os.listdir(memory_dir):
             src = os.path.join(memory_dir, f)
             if os.path.isfile(src):
                 shutil.copy2(src, os.path.join(claude_dir, f))
-        logger.info("Injected %d memory files for user %s", len(os.listdir(memory_dir)), user_id)
+        logger.info(
+            "Injected %d memory files for user %s", len(os.listdir(memory_dir)), user_id
+        )
 
     # Create CLAUDE.md
     claude_md = os.path.join(workspace_path, "CLAUDE.md")
     with open(claude_md, "w") as f:
         f.write("# Persistent Coding Session\n\n")
-        f.write("You are running in a persistent sandbox that will handle multiple tasks.\n")
-        f.write("Git credentials are pre-configured. Clone, commit, and push directly.\n")
+        f.write(
+            "You are running in a persistent sandbox that will handle multiple tasks.\n"
+        )
+        f.write(
+            "Git credentials are pre-configured. Clone, commit, and push directly.\n"
+        )
         f.write("Always run tests before pushing. Follow the user's coding style.\n")
         f.write(f"User: {user_id}\n")
 
@@ -396,24 +447,41 @@ async def create_sandbox_activity(session: dict[str, Any]) -> dict[str, Any]:
     os.makedirs(claude_home, exist_ok=True)
 
     cmd = [
-        "podman", "run", "-d",
-        "--name", container_name,
-        "-v", f"{workspace_path}:/workspace:rw",
-        "-v", f"{claude_home}:/home/agent/.claude:rw",  # Persist sessions, plugins, settings
-        "-w", "/workspace",
+        "podman",
+        "run",
+        "-d",
+        "--name",
+        container_name,
+        "-v",
+        f"{workspace_path}:/workspace:rw",
+        "-v",
+        f"{claude_home}:/home/agent/.claude:rw",  # Persist sessions, plugins, settings
+        "-w",
+        "/workspace",
     ]
 
     # Auth env vars
-    for env_key in ["CLAUDE_CODE_USE_VERTEX", "ANTHROPIC_VERTEX_PROJECT_ID",
-                     "GITHUB_TOKEN", "GITLAB_TOKEN"]:
+    for env_key in [
+        "CLAUDE_CODE_USE_VERTEX",
+        "ANTHROPIC_VERTEX_PROJECT_ID",
+        "GITHUB_TOKEN",
+        "GITLAB_TOKEN",
+    ]:
         val = os.environ.get(env_key, "")
         if val:
             cmd.extend(["-e", f"{env_key}={val}"])
 
     # GCP credentials
-    gcp_adc = os.path.expanduser("~/.config/gcloud/application_default_credentials.json")
+    gcp_adc = os.path.expanduser(
+        "~/.config/gcloud/application_default_credentials.json"
+    )
     if os.path.exists(gcp_adc):
-        cmd.extend(["-e", "GOOGLE_APPLICATION_CREDENTIALS=/gcp/application_default_credentials.json"])
+        cmd.extend(
+            [
+                "-e",
+                "GOOGLE_APPLICATION_CREDENTIALS=/gcp/application_default_credentials.json",
+            ]
+        )
         cmd.extend(["-v", f"{gcp_adc}:/gcp/application_default_credentials.json:ro"])
 
     # Plugins config
@@ -440,7 +508,12 @@ async def create_sandbox_activity(session: dict[str, Any]) -> dict[str, Any]:
     result = subprocess.run(cmd, capture_output=True, text=True, check=True)
 
     container_id = result.stdout.strip()
-    logger.info("Created container %s (id: %s) with claude_home=%s", container_name, container_id[:12], claude_home)
+    logger.info(
+        "Created container %s (id: %s) with claude_home=%s",
+        container_name,
+        container_id[:12],
+        claude_home,
+    )
 
     return {
         "container_name": container_name,
@@ -452,8 +525,7 @@ async def create_sandbox_activity(session: dict[str, Any]) -> dict[str, Any]:
 
 @activity.defn
 async def execute_in_sandbox_activity(args: dict[str, Any]) -> dict[str, Any]:
-    """
-    Execute Claude Code in an existing sandbox container.
+    """Execute Claude Code in an existing sandbox container.
 
     Args:
         args: Dict with keys:
@@ -484,7 +556,8 @@ async def execute_in_sandbox_activity(args: dict[str, Any]) -> dict[str, Any]:
 
     # Write prompt to a temp file in container
     import tempfile
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
         f.write(prompt)
         prompt_file = f.name
 
@@ -498,10 +571,14 @@ async def execute_in_sandbox_activity(args: dict[str, Any]) -> dict[str, Any]:
         # Execute claude-code in container
         result = subprocess.run(
             [
-                "podman", "exec", container_name,
+                "podman",
+                "exec",
+                container_name,
                 "claude-code",
-                "--prompt-file", "/tmp/prompt.txt",
-                "--task-type", task_type,
+                "--prompt-file",
+                "/tmp/prompt.txt",
+                "--task-type",
+                task_type,
             ],
             capture_output=True,
             text=True,
@@ -527,13 +604,13 @@ async def execute_in_sandbox_activity(args: dict[str, Any]) -> dict[str, Any]:
 
     finally:
         import os
+
         os.unlink(prompt_file)
 
 
 @activity.defn
 async def hibernate_sandbox_activity(container_info: dict[str, Any]) -> None:
-    """
-    Hibernate (pause) a sandbox container to save resources.
+    """Hibernate (pause) a sandbox container to save resources.
 
     Args:
         container_info: Dict with container_name key
@@ -554,8 +631,7 @@ async def hibernate_sandbox_activity(container_info: dict[str, Any]) -> None:
 
 @activity.defn
 async def destroy_sandbox_activity(container_info: dict[str, Any]) -> None:
-    """
-    Destroy a sandbox container and optionally clean up workspace.
+    """Destroy a sandbox container and optionally clean up workspace.
 
     Args:
         container_info: Dict with keys:
@@ -583,6 +659,7 @@ async def destroy_sandbox_activity(container_info: dict[str, Any]) -> None:
     # Optionally clean up workspace
     if cleanup_workspace and workspace_path:
         import shutil
+
         logger.info("Cleaning up workspace: %s", workspace_path)
         shutil.rmtree(workspace_path, ignore_errors=True)
 
@@ -599,9 +676,16 @@ async def create_sandbox_activity(session: dict[str, Any]) -> dict[str, Any]:
     session_id = session["session_id"]
     user_id = session.get("user_id", "default")
     repo_url = session.get("repo_url", "")
-    repo_branch = session.get("repo_branch", "")
+    repo_branch = session.get("repo_branch", "")  # base branch to clone
+    feature_branch = session.get("feature_branch", "")  # new branch for changes
 
-    logger.info("Creating persistent sandbox for session: %s", session_id)
+    logger.info(
+        "Creating persistent sandbox: session=%s repo=%s base=%s feature=%s",
+        session_id,
+        repo_url,
+        repo_branch,
+        feature_branch,
+    )
 
     # Create persistent workspace
     workspace = os.path.expanduser(f"~/.claude-workspaces/session-{session_id}")
@@ -616,20 +700,30 @@ async def create_sandbox_activity(session: dict[str, Any]) -> dict[str, Any]:
             src = os.path.join(memory_dir, f)
             if os.path.isfile(src):
                 shutil.copy2(src, os.path.join(claude_dir, f))
-        logger.info("Injected %d memory files for user %s", len(os.listdir(memory_dir)), user_id)
+        logger.info(
+            "Injected %d memory files for user %s", len(os.listdir(memory_dir)), user_id
+        )
 
     # Create CLAUDE.md
     claude_md = os.path.join(workspace, "CLAUDE.md")
     with open(claude_md, "w") as f:
         f.write("# Loop Engineering Agent\n\n")
         f.write("You are an autonomous coding agent running in an isolated sandbox.\n")
-        f.write("Git credentials are pre-configured. Clone, commit, and push directly.\n")
+        f.write(
+            "Git credentials are pre-configured. Clone, commit, and push directly.\n"
+        )
         f.write("Always run tests before pushing. Follow the user's coding style.\n")
         f.write(f"User: {user_id}\n")
         if repo_url:
             f.write(f"\nRepository: {repo_url}\n")
             if repo_branch:
-                f.write(f"Branch: {repo_branch}\n")
+                f.write(f"Base branch: {repo_branch}\n")
+            if feature_branch:
+                f.write(f"Feature branch: {feature_branch}\n")
+                f.write(
+                    f"\nIMPORTANT: Create and work on branch '{feature_branch}' from '{repo_branch}'.\n"
+                )
+                f.write(f"Push to '{feature_branch}' when done.\n")
 
     # Create persistent container
     config = ClaudeCodeConfig(
@@ -639,12 +733,20 @@ async def create_sandbox_activity(session: dict[str, Any]) -> dict[str, Any]:
         timeout_seconds=600,
     )
     runner = PodmanClaudeCodeRunner(config)
-    container_name = await runner.create_session(session_id, workspace)
+    container_name = await runner.create_session(
+        session_id,
+        workspace,
+        repo_url=repo_url,
+        repo_branch=repo_branch,
+        feature_branch=feature_branch,
+    )
 
     logger.info(
-        "Sandbox created: container=%s, workspace=%s",
+        "Sandbox created: container=%s, workspace=%s, repo=%s branch=%s",
         container_name,
         workspace,
+        repo_url,
+        repo_branch,
     )
 
     return {
@@ -663,11 +765,13 @@ async def execute_in_sandbox_activity(args: dict[str, Any]) -> dict[str, Any]:
     container_name = args["container_name"]
     prompt = args["prompt"]
     task_type = args.get("task_type", "implementation")
+    permission_mode = args.get("permission_mode", "acceptEdits")
 
     logger.info(
-        "Executing in sandbox: container=%s, task_type=%s",
+        "Executing in sandbox: container=%s, task_type=%s, permission_mode=%s",
         container_name,
         task_type,
+        permission_mode,
     )
 
     config = ClaudeCodeConfig(
@@ -678,11 +782,52 @@ async def execute_in_sandbox_activity(args: dict[str, Any]) -> dict[str, Any]:
     )
     runner = PodmanClaudeCodeRunner(config)
 
-    # Append workspace note to prompt
     prompt += "\n\nNote: Git credentials are pre-configured. You can clone, commit, and push directly without any tokens."
     prompt += "\nA CLAUDE.md file exists in /workspace with project instructions. Read it first."
 
-    result = await runner.execute_in_session(container_name, prompt, task_type)
+    # Stream Claude Code output to Redis for real-time UI updates
+    stream_callback = None
+    streaming_enabled = args.get("streaming", True)
+    if streaming_enabled:
+        import json as _json
+        import os
+
+        redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+        session_id = args.get("session_id", container_name)
+        user_id = args.get("user_id", "anonymous")
+
+        try:
+            import redis.asyncio as aioredis
+
+            stream_redis = aioredis.from_url(redis_url, decode_responses=True)
+            channel = f"loop-engineering:notifications:{user_id}"
+
+            async def on_stream_event(event: dict) -> None:
+                try:
+                    await stream_redis.publish(
+                        channel,
+                        _json.dumps(
+                            {
+                                "type": "claude_stream",
+                                "workflow_id": session_id,
+                                "event": event,
+                            }
+                        ),
+                    )
+                except Exception:
+                    pass
+
+            stream_callback = on_stream_event
+        except Exception as e:
+            logger.warning("Failed to set up streaming: %s", e)
+
+    result = await runner.execute_in_session(
+        container_name,
+        prompt,
+        task_type,
+        permission_mode=permission_mode,
+        on_stream_event=stream_callback,
+    )
 
     # Compute cost using config pricing
     cost = result.compute_cost(config.cost.pricing)

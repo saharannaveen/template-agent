@@ -11,6 +11,7 @@ class CodeExecutionConfig(BaseModel):
     """Configuration for code execution middleware."""
 
     enabled: bool = False
+    runner: Literal["podman", "k8s"] = "k8s"
     max_timeout_seconds: int = Field(default=60, ge=5, le=300)
     max_code_length: int = Field(default=50_000, ge=100, le=500_000)
     max_output_bytes: int = Field(default=1_048_576)

@@ -43,6 +43,7 @@ dependencies = [
     "opentelemetry-exporter-otlp>=1.33.1,<2.0.0",
     "opentelemetry-instrumentation-fastapi>=0.52b1,<1.0.0",
     "aiokafka>=0.10.0",
+    "temporalio>=1.31.0,<2",
 ]
 
 [project.optional-dependencies]
@@ -135,4 +136,9 @@ exclude_lines = [
     "if __name__ == .__main__.:",
     "class .*\\bProtocol\\):",
     "@(abc\\.)?abstractmethod",
+]
+
+[tool.uv.workspace]
+members = [
+    "NOOA",
 ]

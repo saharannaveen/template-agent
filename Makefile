@@ -107,8 +107,11 @@ local:
 	@lsof -ti :5002 | xargs kill -9 2>/dev/null || true
 	@echo "Cleaning up stale containers from previous naming scheme..."
 	@podman rm -f demo-pgvector demo-redis 2>/dev/null || true
-	@echo "Starting infrastructure (Postgres + Redis)..."
+	@echo "Starting infrastructure (Postgres + Redis + Temporal)..."
 	@export PODMAN_COMPOSE_SILENT=true && podman-compose -f compose.yaml up -d pgvector redis
+	@export PODMAN_COMPOSE_SILENT=true && podman-compose -f compose.yaml --profile temporal up -d temporal temporal-ui 2>/dev/null || true
+	@echo "Waiting for Temporal to be ready..."
+	@for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do podman exec template-agent-temporal sh -c 'temporal operator cluster health 2>/dev/null | grep -q SERVING' && echo "Temporal is ready!" && break || sleep 3; done 2>/dev/null || echo "Temporal still starting (agent will retry on first workflow)"
 	@echo "Waiting for Postgres to be ready..."
 	@until podman exec template-agent-pgvector pg_isready -U postgres -q 2>/dev/null; do sleep 1; done
 	@podman exec template-agent-pgvector psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname='aegra'" | grep -q 1 \
@@ -124,9 +127,11 @@ local:
 		POSTGRES_USER=postgres \
 		POSTGRES_PASSWORD=postgres \
 		REDIS_URL=redis://localhost:6379/0 \
+		TEMPORAL_HOST=localhost:7233 \
 		$(if $(wildcard .venv-dynamic-subagent/bin/aegra),.venv-dynamic-subagent,.venv)/bin/aegra dev --port 5002 --no-db-check
 
 local-down:
+	@export PODMAN_COMPOSE_SILENT=true && podman-compose -f compose.yaml --profile temporal stop temporal temporal-ui 2>/dev/null || true
 	@export PODMAN_COMPOSE_SILENT=true && podman-compose -f compose.yaml stop pgvector redis
 
 headless: ## Start agent in headless mode (background worker with event triggers)
@@ -145,19 +150,41 @@ headless: ## Start agent in headless mode (background worker with event triggers
 
 container:
 	@test -f .env || (echo "Creating .env from .env.example..." && cp .env.example .env)
-	@echo "Starting stack: pgvector, redis, template-agent, jaeger"
-	@echo "Agent:  http://localhost:5002"
-	@echo "Jaeger: http://localhost:16686"
+	@echo "Starting stack: pgvector, redis, template-agent, temporal, temporal-ui, jaeger"
+	@echo "Agent:       http://localhost:5002"
+	@echo "Temporal UI: http://localhost:8081"
+	@echo "Jaeger:      http://localhost:16686"
+	@echo ""
+	@echo "Temporal worker runs on host (needs Podman access for sandbox containers)"
+	@echo "Starting temporal worker in background..."
+	@lsof -ti :5002 | xargs kill -9 2>/dev/null || true
 	@export PODMAN_COMPOSE_SILENT=true; \
-	trap 'export PODMAN_COMPOSE_SILENT=true; podman-compose -f compose.yaml --profile observability down --timeout 10 2>/dev/null || true; exit 130' INT TERM; \
 	ENABLE_OTEL=true \
 	OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317 \
 	ENABLE_OTEL_TRACES=true \
 	OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://jaeger:4317 \
-	podman-compose --profile observability --no-ansi up --build --force-recreate --remove-orphans --timeout=60
+	podman-compose --profile container --profile observability --profile temporal --no-ansi up --build -d --force-recreate --remove-orphans --timeout=60
+	@echo "Stopping containerized temporal-worker (will run on host instead)..."
+	@podman stop template-agent-temporal-worker 2>/dev/null || true
+	@echo "Starting temporal worker on host..."
+	@trap 'kill %1 2>/dev/null; export PODMAN_COMPOSE_SILENT=true; podman-compose -f compose.yaml --profile container --profile observability --profile temporal down --timeout 10 2>/dev/null || true; exit 130' INT TERM; \
+	TEMPORAL_HOST=localhost:7233 \
+	TEMPORAL_NAMESPACE=default \
+	TEMPORAL_TASK_QUEUE=claude-code-workers \
+	POSTGRES_HOST=localhost \
+	POSTGRES_PORT=5432 \
+	POSTGRES_DB=template_agent \
+	POSTGRES_USER=postgres \
+	POSTGRES_PASSWORD=postgres \
+	REDIS_URL=redis://localhost:6379/0 \
+	WORKER_PYTHON=$$([ -f .venv-dynamic-subagent/bin/python ] && echo .venv-dynamic-subagent/bin/python || echo .venv/bin/python); \
+	$$WORKER_PYTHON -m deep_agent.src.claude_code.temporal.worker > temporal-worker.log 2>&1 &\
+	echo "Worker logs: temporal-worker.log"; \
+	echo "Tailing agent logs (Ctrl+C to stop everything)..."; \
+	export PODMAN_COMPOSE_SILENT=true && podman-compose -f compose.yaml --profile container logs -f template-agent
 
 container-down:
-	@export PODMAN_COMPOSE_SILENT=true && podman-compose -f compose.yaml --profile observability down
+	@export PODMAN_COMPOSE_SILENT=true && podman-compose -f compose.yaml --profile container --profile observability --profile temporal down
 
 # ---------------------------------------------------------------------------
 # Development environment targets

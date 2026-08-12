@@ -14,29 +14,29 @@ except ImportError:
     TEMPORAL_AVAILABLE = False
 
     # Mock workflow decorators for when temporalio is not installed
-    class workflow:
+    class workflow:  # noqa: D101
         @staticmethod
-        def defn(cls):
+        def defn(cls):  # noqa: D102
             return cls
 
         @staticmethod
-        def run(func):
+        def run(func):  # noqa: D102
             return func
 
         @staticmethod
-        def signal(func):
+        def signal(func):  # noqa: D102
             return func
 
         @staticmethod
-        def query(func):
+        def query(func):  # noqa: D102
             return func
 
         @staticmethod
-        async def execute_activity(*args, **kwargs):
+        async def execute_activity(*args, **kwargs):  # noqa: D102
             raise NotImplementedError("Temporal SDK not installed")
 
         @staticmethod
-        async def wait_condition(condition):
+        async def wait_condition(condition):  # noqa: D102
             raise NotImplementedError("Temporal SDK not installed")
 
 
@@ -45,8 +45,7 @@ logger = logging.getLogger(__name__)
 
 @workflow.defn
 class LoopEngineeringWorkflow:
-    """
-    Durable workflow for Loop Engineering: estimate → plan → implement (loop) → deliver.
+    """Durable workflow for Loop Engineering: estimate, plan, implement (loop), deliver.
 
     Phases:
     1. Cost estimation - estimate cost and get user approval
@@ -72,8 +71,7 @@ class LoopEngineeringWorkflow:
 
     @workflow.signal
     async def user_responds(self, response: dict[str, Any]) -> None:
-        """
-        Receive user response from any channel (Slack, UI, Email).
+        """Receive user response from any channel (Slack, UI, Email).
 
         Args:
             response: Dict with keys:
@@ -83,17 +81,18 @@ class LoopEngineeringWorkflow:
                 - timestamp: ISO 8601 timestamp
         """
         self.user_response = response
-        self.decision_log.append({
-            "type": response.get("action"),
-            "channel": response.get("channel", "unknown"),
-            "timestamp": response.get("timestamp"),
-            "feedback": response.get("feedback"),
-        })
+        self.decision_log.append(
+            {
+                "type": response.get("action"),
+                "channel": response.get("channel", "unknown"),
+                "timestamp": response.get("timestamp"),
+                "feedback": response.get("feedback"),
+            }
+        )
 
     @workflow.query
     def get_status(self) -> dict[str, Any]:
-        """
-        Query current workflow state.
+        """Query current workflow state.
 
         Used by UI dashboard to display real-time progress.
 
@@ -113,8 +112,7 @@ class LoopEngineeringWorkflow:
 
     @workflow.run
     async def run(self, task: dict[str, Any]) -> dict[str, Any]:
-        """
-        Execute the Loop Engineering workflow.
+        """Execute the Loop Engineering workflow.
 
         Args:
             task: Dict with keys:
@@ -149,7 +147,9 @@ class LoopEngineeringWorkflow:
         self.status = "estimating"
         logger.info("Starting cost estimation phase")
 
-        await self._emit_status(workflow_id, "estimating", "📊 Estimating cost and complexity...")
+        await self._emit_status(
+            workflow_id, "estimating", "📊 Estimating cost and complexity..."
+        )
 
         estimate = await wf.execute_activity(
             "estimate_cost_activity",
@@ -157,9 +157,12 @@ class LoopEngineeringWorkflow:
             start_to_close_timeout=timedelta(seconds=30),
         )
 
-        await self._emit_status(workflow_id, "cost_ready",
+        await self._emit_status(
+            workflow_id,
+            "cost_ready",
             f"📊 Estimated: {estimate.get('complexity', '?')} complexity, "
-            f"${estimate.get('estimated_cost_low', 0):.2f}-${estimate.get('estimated_cost_high', 0):.2f}")
+            f"${estimate.get('estimated_cost_low', 0):.2f}-${estimate.get('estimated_cost_high', 0):.2f}",
+        )
 
         # Checkpoint: cost approval
         await self._checkpoint("cost_estimate", estimate)
@@ -171,27 +174,38 @@ class LoopEngineeringWorkflow:
         # ── Phase 2: Planning ──
         self.status = "planning"
         logger.info("Starting planning phase")
-        await self._emit_status(workflow_id, "planning", "📋 Creating implementation plan...")
+        await self._emit_status(
+            workflow_id, "planning", "📋 Creating implementation plan..."
+        )
 
         plan_result = await wf.execute_activity(
             "run_claude_code_activity",
-            args=[{
-                "prompt": f"Analyze this task and create a numbered plan. Do NOT implement yet.\n\n{task['prompt']}",
-                "workspace_path": task.get("workspace_path", "/workspace"),
-                "task_type": "planning",
-            }],
+            args=[
+                {
+                    "prompt": f"Analyze this task and create a numbered plan. Do NOT implement yet.\n\n{task['prompt']}",
+                    "workspace_path": task.get("workspace_path", "/workspace"),
+                    "task_type": "planning",
+                }
+            ],
             start_to_close_timeout=timedelta(minutes=5),
         )
 
         # Checkpoint: plan review
-        await self._checkpoint("plan_review", {
-            "plan": plan_result.get("output", ""),
-            "cost": plan_result.get("cost", 0.0),
-        })
+        await self._checkpoint(
+            "plan_review",
+            {
+                "plan": plan_result.get("output", ""),
+                "cost": plan_result.get("cost", 0.0),
+            },
+        )
 
         if self.user_response and self.user_response.get("action") == "cancel":
             logger.info("Workflow cancelled at plan review checkpoint")
-            return {"status": "cancelled", "cost": self.cumulative_cost, "decisions": self.decision_log}
+            return {
+                "status": "cancelled",
+                "cost": self.cumulative_cost,
+                "decisions": self.decision_log,
+            }
 
         # Update prompt with user feedback if modified
         prompt = task["prompt"]
@@ -201,7 +215,9 @@ class LoopEngineeringWorkflow:
 
         # ── Phase 3: Implementation Loop ──
         self.status = "implementing"
-        logger.info("Starting implementation phase with max %d iterations", max_iterations)
+        logger.info(
+            "Starting implementation phase with max %d iterations", max_iterations
+        )
 
         error_context = ""
         session_id = None
@@ -211,19 +227,24 @@ class LoopEngineeringWorkflow:
             self.current_iteration = iteration
             logger.info("Starting iteration %d/%d", iteration, max_iterations)
 
-            await self._emit_status(workflow_id, "implementing",
-                f"🔨 Iteration {iteration}/{max_iterations} — Claude Code running in sandbox... (cost so far: ${self.cumulative_cost:.2f})")
+            await self._emit_status(
+                workflow_id,
+                "implementing",
+                f"🔨 Iteration {iteration}/{max_iterations} — Claude Code running in sandbox... (cost so far: ${self.cumulative_cost:.2f})",
+            )
 
             full_prompt = prompt + error_context
 
             result = await wf.execute_activity(
                 "run_claude_code_activity",
-                args=[{
-                    "prompt": full_prompt,
-                    "workspace_path": task.get("workspace_path", "/workspace"),
-                    "task_type": task.get("task_type", "implementation"),
-                    "session_id": session_id,
-                }],
+                args=[
+                    {
+                        "prompt": full_prompt,
+                        "workspace_path": task.get("workspace_path", "/workspace"),
+                        "task_type": task.get("task_type", "implementation"),
+                        "session_id": session_id,
+                    }
+                ],
                 start_to_close_timeout=timedelta(minutes=10),
             )
 
@@ -237,25 +258,39 @@ class LoopEngineeringWorkflow:
             tokens = f"{result.get('input_tokens', 0)}/{result.get('output_tokens', 0)}"
 
             if test_passed:
-                await self._emit_status(workflow_id, "iteration_passed",
-                    f"✅ Iteration {iteration} passed! model={model} tokens={tokens} cost=${iteration_cost:.4f}")
+                await self._emit_status(
+                    workflow_id,
+                    "iteration_passed",
+                    f"✅ Iteration {iteration} passed! model={model} tokens={tokens} cost=${iteration_cost:.4f}",
+                )
             else:
-                await self._emit_status(workflow_id, "iteration_failed",
-                    f"❌ Iteration {iteration} failed. model={model} tokens={tokens} cost=${iteration_cost:.4f} — retrying...")
+                await self._emit_status(
+                    workflow_id,
+                    "iteration_failed",
+                    f"❌ Iteration {iteration} failed. model={model} tokens={tokens} cost=${iteration_cost:.4f} — retrying...",
+                )
 
             logger.info(
                 "Iteration %d complete: cost=$%.2f, cumulative=$%.2f, passed=%s",
-                iteration, iteration_cost, self.cumulative_cost, test_passed,
+                iteration,
+                iteration_cost,
+                self.cumulative_cost,
+                test_passed,
             )
 
             # Cost circuit breaker
             if self.cumulative_cost > max_cost:
-                logger.warning("Cost exceeded: $%.2f > $%.2f", self.cumulative_cost, max_cost)
-                await self._notify("cost_exceeded", {
-                    "cumulative_cost": self.cumulative_cost,
-                    "max_cost": max_cost,
-                    "iteration": iteration,
-                })
+                logger.warning(
+                    "Cost exceeded: $%.2f > $%.2f", self.cumulative_cost, max_cost
+                )
+                await self._notify(
+                    "cost_exceeded",
+                    {
+                        "cumulative_cost": self.cumulative_cost,
+                        "max_cost": max_cost,
+                        "iteration": iteration,
+                    },
+                )
                 return {
                     "status": "cost_exceeded",
                     "cost": self.cumulative_cost,
@@ -272,12 +307,15 @@ class LoopEngineeringWorkflow:
             # Tests failed - check for struggle threshold
             if iteration >= struggle_threshold:
                 logger.info("Struggle threshold reached at iteration %d", iteration)
-                await self._checkpoint("struggle_alert", {
-                    "iteration": iteration,
-                    "max_iterations": max_iterations,
-                    "cumulative_cost": self.cumulative_cost,
-                    "last_error": result.get("output", "")[-500:],
-                })
+                await self._checkpoint(
+                    "struggle_alert",
+                    {
+                        "iteration": iteration,
+                        "max_iterations": max_iterations,
+                        "cumulative_cost": self.cumulative_cost,
+                        "last_error": result.get("output", "")[-500:],
+                    },
+                )
 
                 if self.user_response and self.user_response.get("action") == "cancel":
                     logger.info("Workflow cancelled at struggle checkpoint")
@@ -289,7 +327,10 @@ class LoopEngineeringWorkflow:
                     }
 
                 # Add user guidance to error context if provided
-                if self.user_response and self.user_response.get("action") == "intervene":
+                if (
+                    self.user_response
+                    and self.user_response.get("action") == "intervene"
+                ):
                     feedback = self.user_response.get("feedback", "")
                     error_context += f"\n\nUSER GUIDANCE: {feedback}"
 
@@ -304,11 +345,14 @@ class LoopEngineeringWorkflow:
         self.status = "delivering"
         logger.info("Starting delivery phase")
 
-        await self._checkpoint("delivery", {
-            "output": last_result.get("output", "") if last_result else "",
-            "cost": self.cumulative_cost,
-            "iterations": self.current_iteration,
-        })
+        await self._checkpoint(
+            "delivery",
+            {
+                "output": last_result.get("output", "") if last_result else "",
+                "cost": self.cumulative_cost,
+                "iterations": self.current_iteration,
+            },
+        )
 
         if self.user_response and self.user_response.get("action") == "cancel":
             logger.info("Workflow cancelled at delivery checkpoint")
@@ -319,12 +363,19 @@ class LoopEngineeringWorkflow:
                 "decisions": self.decision_log,
             }
 
-        logger.info("Workflow complete: %d iterations, $%.2f total cost", self.current_iteration, self.cumulative_cost)
+        logger.info(
+            "Workflow complete: %d iterations, $%.2f total cost",
+            self.current_iteration,
+            self.cumulative_cost,
+        )
 
         output = last_result.get("output", "") if last_result else ""
 
-        await self._emit_status(workflow_id, "complete",
-            f"🎉 Workflow complete! {self.current_iteration} iterations, ${self.cumulative_cost:.4f} total cost")
+        await self._emit_status(
+            workflow_id,
+            "complete",
+            f"🎉 Workflow complete! {self.current_iteration} iterations, ${self.cumulative_cost:.4f} total cost",
+        )
 
         # Post result back to chat thread
         thread_id = task.get("thread_id", "")
@@ -354,8 +405,7 @@ class LoopEngineeringWorkflow:
         }
 
     async def _checkpoint(self, checkpoint_type: str, data: dict[str, Any]) -> None:
-        """
-        Notify user and wait for response.
+        """Notify user and wait for response.
 
         Blocks execution until user responds via signal.
 
@@ -384,25 +434,29 @@ class LoopEngineeringWorkflow:
         if not TEMPORAL_AVAILABLE:
             return
         from temporalio import workflow as wf
+
         try:
             await wf.execute_activity(
                 "notify_user_activity",
-                args=["progress", {
-                    "workflow_id": workflow_id,
-                    "phase": phase,
-                    "message": message,
-                    "status": self.status,
-                    "iteration": self.current_iteration,
-                    "cost": self.cumulative_cost,
-                }, self.cumulative_cost],
+                args=[
+                    "progress",
+                    {
+                        "workflow_id": workflow_id,
+                        "phase": phase,
+                        "message": message,
+                        "status": self.status,
+                        "iteration": self.current_iteration,
+                        "cost": self.cumulative_cost,
+                    },
+                    self.cumulative_cost,
+                ],
                 start_to_close_timeout=timedelta(seconds=10),
             )
         except Exception:
             pass
 
     async def _notify(self, event_type: str, data: dict[str, Any]) -> None:
-        """
-        Notify user without waiting for response.
+        """Notify user without waiting for response.
 
         Fire-and-forget notification for events that don't require approval.
 
@@ -463,8 +517,7 @@ class CodingSessionWorkflow:
 
     @workflow.run
     async def run(self, session: dict[str, Any]) -> dict[str, Any]:
-        """
-        Execute the persistent coding session workflow.
+        """Execute the persistent coding session workflow.
 
         Args:
             session: Dict with keys:
@@ -505,11 +558,15 @@ class CodingSessionWorkflow:
         # Notify user that sandbox is ready
         await wf.execute_activity(
             "notify_user_activity",
-            args=["progress", {
-                "workflow_id": session_id,
-                "message": "🟢 Sandbox ready. Waiting for tasks...",
-                "status": "ready",
-            }, 0.0],
+            args=[
+                "progress",
+                {
+                    "workflow_id": session_id,
+                    "message": "🟢 Sandbox ready. Waiting for tasks...",
+                    "status": "ready",
+                },
+                0.0,
+            ],
             start_to_close_timeout=timedelta(seconds=10),
         )
 
@@ -517,19 +574,23 @@ class CodingSessionWorkflow:
         first_prompt = session.get("prompt", "")
         if first_prompt:
             logger.info("Processing initial task for session %s", session_id)
-            result = await self._process_task(session, first_prompt, session.get("task_type", "implementation"))
+            result = await self._process_task(
+                session, first_prompt, session.get("task_type", "implementation")
+            )
             # Post result to chat
             if thread_id:
                 await wf.execute_activity(
                     "post_result_to_chat_activity",
-                    args=[{
-                        "thread_id": thread_id,
-                        "workflow_id": session_id,
-                        "output": result.get("output", ""),
-                        "cost": self.total_cost,
-                        "iterations": self.tasks_completed,
-                        "status": "task_complete",
-                    }],
+                    args=[
+                        {
+                            "thread_id": thread_id,
+                            "workflow_id": session_id,
+                            "output": result.get("output", ""),
+                            "cost": self.total_cost,
+                            "iterations": self.tasks_completed,
+                            "status": "task_complete",
+                        }
+                    ],
                     start_to_close_timeout=timedelta(seconds=30),
                 )
 
@@ -540,14 +601,19 @@ class CodingSessionWorkflow:
 
             try:
                 # Wait for next task or idle timeout
-                logger.info("Session %s waiting for next task (idle timeout: 30m)", session_id)
+                logger.info(
+                    "Session %s waiting for next task (idle timeout: 30m)", session_id
+                )
                 await wf.wait_condition(
                     lambda: self.pending_task is not None,
                     timeout=timedelta(minutes=30),  # idle timeout
                 )
             except Exception:
                 # Idle timeout — hibernate the CONTAINER but keep WORKFLOW alive
-                logger.info("Session %s idle timeout — hibernating container (workflow stays alive)", session_id)
+                logger.info(
+                    "Session %s idle timeout — hibernating container (workflow stays alive)",
+                    session_id,
+                )
                 self.status = "hibernated"
                 await wf.execute_activity(
                     "hibernate_sandbox_activity",
@@ -556,11 +622,15 @@ class CodingSessionWorkflow:
                 )
                 await wf.execute_activity(
                     "notify_user_activity",
-                    args=["progress", {
-                        "workflow_id": session_id,
-                        "message": "💤 Container hibernated (30m idle). Send a new task to resume.",
-                        "status": "hibernated",
-                    }, self.total_cost],
+                    args=[
+                        "progress",
+                        {
+                            "workflow_id": session_id,
+                            "message": "💤 Container hibernated (30m idle). Send a new task to resume.",
+                            "status": "hibernated",
+                        },
+                        self.total_cost,
+                    ],
                     start_to_close_timeout=timedelta(seconds=10),
                 )
                 # DON'T return — keep waiting. Workflow stays alive in Temporal.
@@ -587,9 +657,13 @@ class CodingSessionWorkflow:
                         args=[{**session, "session_id": session_id, "resume": True}],
                         start_to_close_timeout=timedelta(minutes=2),
                     )
-                    logger.info("Session %s container resumed from hibernation", session_id)
+                    logger.info(
+                        "Session %s container resumed from hibernation", session_id
+                    )
                 except Exception:
-                    logger.info("Session %s creating new container (resume failed)", session_id)
+                    logger.info(
+                        "Session %s creating new container (resume failed)", session_id
+                    )
                     self.container_info = await wf.execute_activity(
                         "create_sandbox_activity",
                         args=[session],
@@ -597,23 +671,31 @@ class CodingSessionWorkflow:
                     )
 
             prompt = task.get("prompt", task.get("content", "")) if task else ""
-            task_type = task.get("task_type", "implementation") if task else "implementation"
+            task_type = (
+                task.get("task_type", "implementation") if task else "implementation"
+            )
 
-            logger.info("Processing task %d for session %s", self.tasks_completed + 1, session_id)
+            logger.info(
+                "Processing task %d for session %s",
+                self.tasks_completed + 1,
+                session_id,
+            )
             result = await self._process_task(session, prompt, task_type)
 
             # Post result to chat
             if thread_id:
                 await wf.execute_activity(
                     "post_result_to_chat_activity",
-                    args=[{
-                        "thread_id": thread_id,
-                        "workflow_id": session_id,
-                        "output": result.get("output", ""),
-                        "cost": self.total_cost,
-                        "iterations": self.tasks_completed,
-                        "status": "task_complete",
-                    }],
+                    args=[
+                        {
+                            "thread_id": thread_id,
+                            "workflow_id": session_id,
+                            "output": result.get("output", ""),
+                            "cost": self.total_cost,
+                            "iterations": self.tasks_completed,
+                            "status": "task_complete",
+                        }
+                    ],
                     start_to_close_timeout=timedelta(seconds=30),
                 )
 
@@ -632,7 +714,9 @@ class CodingSessionWorkflow:
             "total_cost": self.total_cost,
         }
 
-    async def _process_task(self, session: dict[str, Any], prompt: str, task_type: str) -> dict[str, Any]:
+    async def _process_task(
+        self, session: dict[str, Any], prompt: str, task_type: str
+    ) -> dict[str, Any]:
         """Process a single task in the persistent session."""
         if not TEMPORAL_AVAILABLE:
             raise RuntimeError("Temporal SDK not installed")
@@ -643,21 +727,29 @@ class CodingSessionWorkflow:
 
         await wf.execute_activity(
             "notify_user_activity",
-            args=["progress", {
-                "workflow_id": session_id,
-                "message": f"🔨 Processing task {self.tasks_completed + 1}...",
-                "status": "active",
-            }, self.total_cost],
+            args=[
+                "progress",
+                {
+                    "workflow_id": session_id,
+                    "message": f"🔨 Processing task {self.tasks_completed + 1}...",
+                    "status": "active",
+                },
+                self.total_cost,
+            ],
             start_to_close_timeout=timedelta(seconds=10),
         )
 
         result = await wf.execute_activity(
             "execute_in_sandbox_activity",
-            args=[{
-                "container_name": self.container_info["container_name"],
-                "prompt": prompt + "\n\nNote: Git credentials are pre-configured. You can clone, commit, and push directly.",
-                "task_type": task_type,
-            }],
+            args=[
+                {
+                    "container_name": self.container_info["container_name"],
+                    "prompt": prompt
+                    + "\n\nNote: Git credentials are pre-configured. You can clone, commit, and push directly.",
+                    "task_type": task_type,
+                    "permission_mode": session.get("permission_mode", "acceptEdits"),
+                }
+            ],
             start_to_close_timeout=timedelta(minutes=10),
         )
 
@@ -666,11 +758,15 @@ class CodingSessionWorkflow:
 
         await wf.execute_activity(
             "notify_user_activity",
-            args=["progress", {
-                "workflow_id": session_id,
-                "message": f"✅ Task {self.tasks_completed} complete. Cost: ${self.total_cost:.4f}",
-                "status": "task_complete",
-            }, self.total_cost],
+            args=[
+                "progress",
+                {
+                    "workflow_id": session_id,
+                    "message": f"✅ Task {self.tasks_completed} complete. Cost: ${self.total_cost:.4f}",
+                    "status": "task_complete",
+                },
+                self.total_cost,
+            ],
             start_to_close_timeout=timedelta(seconds=10),
         )
 

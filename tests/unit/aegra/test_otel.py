@@ -200,13 +200,14 @@ class TestMetricsContainer:
         assert container.stream_duration_seconds is not None
         assert container.stream_errors_total is not None
         assert container.time_to_first_token_seconds is not None
+        assert container.llm_time_to_first_token_seconds is not None
         assert container.threads_created_total is not None
         assert container.threads_active is not None
         assert container.threads_deleted_total is not None
         assert container.thread_messages_count is not None
 
         assert mock_meter.create_counter.call_count == 6
-        assert mock_meter.create_histogram.call_count == 5
+        assert mock_meter.create_histogram.call_count == 6
         assert mock_meter.create_up_down_counter.call_count == 2
 
 

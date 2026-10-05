@@ -20,6 +20,7 @@ INSTRUMENTATION STATUS:
 Currently, these helpers are defined but not yet called from runtime modules.
 """
 
+import contextvars
 import os
 import socket
 import threading
@@ -27,16 +28,20 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-from opentelemetry import metrics, trace
-from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.sdk.metrics._internal.aggregation import (
+_conversation_start_mono: contextvars.ContextVar[float] = contextvars.ContextVar(
+    "_conversation_start_mono", default=0.0
+)
+
+from opentelemetry import metrics, trace  # noqa: E402
+from opentelemetry.sdk.metrics import MeterProvider  # noqa: E402
+from opentelemetry.sdk.metrics._internal.aggregation import (  # noqa: E402
     ExplicitBucketHistogramAggregation,
 )
-from opentelemetry.sdk.metrics.view import View
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.metrics.view import View  # noqa: E402
+from opentelemetry.sdk.resources import Resource  # noqa: E402
+from opentelemetry.sdk.trace import TracerProvider  # noqa: E402
 
-from deep_agent.utils.pylogger import get_python_logger
+from deep_agent.utils.pylogger import get_python_logger  # noqa: E402
 
 logger = get_python_logger()
 
@@ -505,6 +510,9 @@ def initialize_telemetry() -> None:
         tracer_provider = TracerProvider(resource=resource)
         tracer_provider.add_span_processor(BatchSpanProcessor(otlp_span_exporter))
 
+    from deep_agent.aegra.perf_collector import PerfSpanProcessor
+
+    tracer_provider.add_span_processor(PerfSpanProcessor())
     _tracer_provider = tracer_provider
 
     metrics.set_meter_provider(meter_provider)
@@ -676,12 +684,25 @@ def record_conversation_started(
     attributes: Optional[dict[str, Any]] = None,
 ) -> float:
     """Record conversation start. Returns monotonic timestamp for duration."""
+    from deep_agent.aegra.perf_collector import get_collector
+
     m = get_metrics()
     if m:
         base_attrs = _attrs(attributes)
         m.conversations_total.add(1, {"status": status, **base_attrs})
         m.active_conversations.add(1, base_attrs)
-    return time.monotonic()
+    pc = get_collector()
+    pc.conversations_started.inc()
+    pc.conversations_active.inc()
+    pc.record_request()
+    trace_id = ""
+    thread_id = ""
+    if attributes:
+        trace_id = str(attributes.get("trace_id", ""))
+        thread_id = str(attributes.get("thread_id", ""))
+    start = pc.begin_request(trace_id=trace_id, thread_id=thread_id)
+    _conversation_start_mono.set(start)
+    return start
 
 
 def record_conversation_completed(
@@ -691,6 +712,8 @@ def record_conversation_completed(
     attributes: Optional[dict[str, Any]] = None,
 ) -> None:
     """Record conversation completion with duration."""
+    from deep_agent.aegra.perf_collector import get_collector
+
     m = get_metrics()
     if m:
         base_attrs = _attrs(attributes)
@@ -699,6 +722,17 @@ def record_conversation_completed(
         m.conversations_total.add(1, merged)
         m.active_conversations.add(-1, base_attrs)
         m.conversation_duration_seconds.record(duration, merged)
+    pc = get_collector()
+    pc.conversations_completed.inc()
+    pc.conversations_active.dec()
+    trace_id = ""
+    if attributes:
+        trace_id = str(attributes.get("trace_id", ""))
+    pc.finish_request(
+        start_mono,
+        trace_id=trace_id,
+        status=status if status != "completed" else "ok",
+    )
 
 
 def record_message_sent(
@@ -708,6 +742,8 @@ def record_message_sent(
     attributes: Optional[dict[str, Any]] = None,
 ) -> None:
     """Record a message sent or received."""
+    from deep_agent.aegra.perf_collector import get_collector
+
     m = get_metrics()
     if m:
         merged = {
@@ -716,10 +752,14 @@ def record_message_sent(
             **_attrs(attributes),
         }
         m.messages_total.add(1, merged)
+    get_collector().messages_sent.inc()
 
 
 def record_stream_started() -> float:
     """Record stream start. Returns monotonic timestamp."""
+    from deep_agent.aegra.perf_collector import get_collector
+
+    get_collector().streams_active.inc()
     return time.monotonic()
 
 
@@ -729,10 +769,23 @@ def record_first_token(
     attributes: Optional[dict[str, Any]] = None,
 ) -> None:
     """Record time-to-first-token from stream start."""
+    from deep_agent.aegra.perf_collector import get_collector
+
+    ttft = time.monotonic() - stream_start_mono
     m = get_metrics()
     if m:
-        ttft = time.monotonic() - stream_start_mono
         m.time_to_first_token_seconds.record(ttft, _attrs(attributes))
+    pc = get_collector()
+    pc.record_ttft_e2e(ttft)
+    trace_id = ""
+    if attributes:
+        trace_id = str(attributes.get("trace_id", ""))
+    pc.finish_request(
+        stream_start_mono,
+        trace_id=trace_id,
+        ttft_ms=ttft * 1000,
+        status="ok",
+    )
 
 
 def record_stream_completed(
@@ -742,12 +795,17 @@ def record_stream_completed(
     attributes: Optional[dict[str, Any]] = None,
 ) -> None:
     """Record stream completion with duration and token count."""
+    from deep_agent.aegra.perf_collector import get_collector
+
+    duration = time.monotonic() - stream_start_mono
     m = get_metrics()
     if m:
         merged = _attrs(attributes)
-        duration = time.monotonic() - stream_start_mono
         m.stream_duration_seconds.record(duration, merged)
         m.stream_tokens_total.add(token_count, merged)
+    pc = get_collector()
+    pc.stream_durations.record(duration * 1000)
+    pc.streams_active.dec()
 
 
 def record_stream_error(
@@ -756,10 +814,13 @@ def record_stream_error(
     attributes: Optional[dict[str, Any]] = None,
 ) -> None:
     """Record a stream error."""
+    from deep_agent.aegra.perf_collector import get_collector
+
     m = get_metrics()
     if m:
         merged = {"error_type": error_type, **_attrs(attributes)}
         m.stream_errors_total.add(1, merged)
+    get_collector().record_error(error_type)
 
 
 def record_thread_created(
@@ -855,15 +916,18 @@ def record_graph_built(
         mcp_tool_count: Number of MCP tools loaded into the graph
         attributes: Additional attributes to attach to the metric
     """
+    from deep_agent.aegra.perf_collector import get_collector
+
+    duration = time.monotonic() - build_start_mono
     m = get_metrics()
     if m:
-        duration = time.monotonic() - build_start_mono
         merged = {
             "cache_hit": str(cache_hit),
             "mcp_tools": str(mcp_tool_count),
             **_attrs(attributes),
         }
         m.graph_build_duration_seconds.record(duration, merged)
+    get_collector().record_span("graph.build", duration)
 
 
 def record_llm_first_token(
@@ -872,7 +936,12 @@ def record_llm_first_token(
     attributes: Optional[dict[str, Any]] = None,
 ) -> None:
     """Record LLM provider time-to-first-token (excludes graph overhead)."""
+    from deep_agent.aegra.perf_collector import get_collector
+
+    ttft = time.monotonic() - llm_start_mono
+    pc = get_collector()
+    pc.record_ttft_llm(ttft)
+    pc.record_span("llm.inference", ttft)
     m = get_metrics()
     if m:
-        ttft = time.monotonic() - llm_start_mono
         m.llm_time_to_first_token_seconds.record(ttft, _attrs(attributes))

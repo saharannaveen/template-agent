@@ -408,11 +408,14 @@ async def agent(runtime: ServerRuntime) -> Any:
             mcp_span.set_attribute("mcp.tool_count", len(mcp_tools))
             mcp_span.set_attribute("mcp.server_count", len(mcp_server_names))
 
-        from deep_agent.src.triggers.tools import get_builtin_tools
+        all_available_tools = list(mcp_tools)
 
-        all_available_tools = list(mcp_tools) + get_builtin_tools()
-        tools = agent_config.resolve_tools(
-            tool_names, all_available_tools, agent_name=agent_name
+        from deep_agent.src.capability import (
+            resolve_capability_manifest,
+        )
+
+        tools, capability_manifest = resolve_capability_manifest(
+            tool_names, all_available_tools, mcp_server_names, agent_name=agent_name
         )
         if not tools and not tool_names and mcp_server_names and mcp_tools:
             logger.info(

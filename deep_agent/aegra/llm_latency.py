@@ -6,7 +6,7 @@ from uuid import UUID
 
 from langchain_core.callbacks import AsyncCallbackHandler
 
-from deep_agent.aegra.otel import record_llm_first_token
+from deep_agent.aegra.otel import _conversation_start_mono, record_llm_first_token
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
@@ -23,6 +23,7 @@ class LLMLatencyCallbackHandler(AsyncCallbackHandler):
         """Initialize start time tracking dict."""
         super().__init__()
         self._start_times: dict[UUID, float] = {}
+        self._e2e_ttft_recorded = False
 
     async def on_llm_start(
         self,
@@ -56,6 +57,28 @@ class LLMLatencyCallbackHandler(AsyncCallbackHandler):
             if model_name:
                 attrs["model"] = model_name
         record_llm_first_token(start, attributes=attrs if attrs else None)
+
+        if not self._e2e_ttft_recorded:
+            from deep_agent.aegra.perf_collector import get_collector
+
+            pc = get_collector()
+            conv_start = _conversation_start_mono.get(0.0)
+            if conv_start > 0:
+                e2e_ttft = time.monotonic() - conv_start
+                pc.record_ttft_e2e(e2e_ttft)
+                pc.finish_request(
+                    conv_start,
+                    ttft_ms=e2e_ttft * 1000,
+                    status="ok",
+                )
+            else:
+                llm_ttft = time.monotonic() - start if start else 0.0
+                pc.finish_request(
+                    time.monotonic() - (llm_ttft if llm_ttft > 0 else 0),
+                    ttft_ms=llm_ttft * 1000 if llm_ttft > 0 else 0,
+                    status="ok",
+                )
+            self._e2e_ttft_recorded = True
 
     async def on_llm_end(
         self,

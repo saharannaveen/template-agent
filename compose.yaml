@@ -105,7 +105,7 @@ services:
     env_file:
       - .env
     environment:
-      - ENABLE_AUTH=true
+      - ENABLE_AUTH=false
       - POSTGRES_HOST=pgvector
       - POSTGRES_PORT=5432
       - POSTGRES_DB=template_agent
@@ -151,7 +151,8 @@ services:
     container_name: demo-jaeger
     ports:
       - "16686:16686"  # Jaeger UI
-      - "4317"         # OTLP gRPC receiver (internal only)
+      - "4317:4317"    # OTLP gRPC receiver
+      - "4318:4318"    # OTLP HTTP receiver (aegra uses proto.http)
     environment:
       - COLLECTOR_OTLP_ENABLED=true
     restart: unless-stopped

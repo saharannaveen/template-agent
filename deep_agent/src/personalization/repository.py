@@ -153,15 +153,23 @@ class PersonalizationRepository:
 
     async def list_top_memories(self, user_id: str, limit: int = 20) -> list[Memory]:
         """Return top-N memories for *user_id*, ranked by score descending."""
-        await self.ensure_tables()
-        pool = await _get_pool(self._uri)
-        async with pool.connection() as conn:
-            cur = await conn.execute(
-                "SELECT * FROM user_memories WHERE user_id = %s "
-                "ORDER BY score DESC, updated_at DESC LIMIT %s",
-                (user_id, limit),
-            )
-            return [Memory(**row) for row in await cur.fetchall()]
+        from deep_agent.aegra.otel import get_tracer
+
+        tracer = get_tracer()
+        with tracer.start_as_current_span("personalization.load") as span:
+            span.set_attribute("personalization.operation", "list_top_memories")
+            span.set_attribute("personalization.limit", limit)
+            await self.ensure_tables()
+            pool = await _get_pool(self._uri)
+            async with pool.connection() as conn:
+                cur = await conn.execute(
+                    "SELECT * FROM user_memories WHERE user_id = %s "
+                    "ORDER BY score DESC, updated_at DESC LIMIT %s",
+                    (user_id, limit),
+                )
+                memories = [Memory(**row) for row in await cur.fetchall()]
+            span.set_attribute("personalization.memory_count", len(memories))
+            return memories
 
     async def create_memory(
         self, user_id: str, content: str, memory_id: uuid.UUID | None = None
@@ -231,27 +239,34 @@ class PersonalizationRepository:
         self, user_ids: list[str], *, active_only: bool = True
     ) -> list[Rule]:
         """Return rules for any of *user_ids*, oldest-id first after created_at desc."""
-        await self.ensure_tables()
-        unique_ids = [u for u in dict.fromkeys(user_ids) if u]
-        if not unique_ids:
-            return []
-        clause = " AND is_active = TRUE" if active_only else ""
-        pool = await _get_pool(self._uri)
-        async with pool.connection() as conn:
-            cur = await conn.execute(
-                f"SELECT * FROM user_rules WHERE user_id = ANY(%s){clause} "
-                "ORDER BY created_at DESC",
-                (unique_ids,),
-            )
-            seen: set[str] = set()
-            rules: list[Rule] = []
-            for row in await cur.fetchall():
-                rule = Rule(**row)
-                key = str(rule.id)
-                if key in seen:
-                    continue
-                seen.add(key)
-                rules.append(rule)
+        from deep_agent.aegra.otel import get_tracer
+
+        tracer = get_tracer()
+        with tracer.start_as_current_span("personalization.load") as span:
+            span.set_attribute("personalization.operation", "list_rules")
+            span.set_attribute("personalization.active_only", active_only)
+            await self.ensure_tables()
+            unique_ids = [u for u in dict.fromkeys(user_ids) if u]
+            if not unique_ids:
+                return []
+            clause = " AND is_active = TRUE" if active_only else ""
+            pool = await _get_pool(self._uri)
+            async with pool.connection() as conn:
+                cur = await conn.execute(
+                    f"SELECT * FROM user_rules WHERE user_id = ANY(%s){clause} "
+                    "ORDER BY created_at DESC",
+                    (unique_ids,),
+                )
+                seen: set[str] = set()
+                rules: list[Rule] = []
+                for row in await cur.fetchall():
+                    rule = Rule(**row)
+                    key = str(rule.id)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    rules.append(rule)
+            span.set_attribute("personalization.rule_count", len(rules))
             return rules
 
     async def upsert_rule(

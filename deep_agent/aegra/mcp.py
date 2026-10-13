@@ -567,29 +567,33 @@ async def _connect_single_server(
         mcp_server: Alias for ``server_key`` (v2 Apps naming). Ignored when
             ``server_key`` is provided.
     """
+    from deep_agent.aegra.otel import get_tracer
+
     auth_key = server_key or mcp_server or name
     breaker = _get_mcp_breaker()
     if breaker.is_open:
         logger.warning(f"[{name}] circuit breaker open — skipping connection")
         return []
 
+    tracer = get_tracer()
     max_attempts = 2
     for attempt in range(1, max_attempts + 1):
         try:
-            async with asyncio.timeout(timeout):
-                client = MultiServerMCPClient(
-                    {name: config},
-                    tool_interceptors=[
-                        _TokenInjectorInterceptor(
-                            name, server_cfg, server_key=auth_key
-                        ),
-                        # Capture raw MCP CallToolResult before LC conversion so
-                        # UI-bound tools embed spec-faithful mcp_app.result.
-                        McpAppCallToolResultInterceptor(),
-                    ],
-                    tool_name_prefix=bool(server_cfg.get("tool_prefix", "")),
-                )
-                tools: list[Any] = await client.get_tools()
+            with tracer.start_as_current_span("mcp.server_connect") as span:
+                span.set_attribute("mcp.server_name", name)
+                async with asyncio.timeout(timeout):
+                    client = MultiServerMCPClient(
+                        {name: config},
+                        tool_interceptors=[
+                            _TokenInjectorInterceptor(
+                                name, server_cfg, server_key=auth_key
+                            ),
+                            McpAppCallToolResultInterceptor(),
+                        ],
+                        tool_name_prefix=bool(server_cfg.get("tool_prefix", "")),
+                    )
+                    tools: list[Any] = await client.get_tools()
+                span.set_attribute("mcp.tool_count", len(tools))
             model_tools = prepare_tools_for_model(tools, auth_key)
             skipped = len(tools) - len(model_tools)
             if skipped:

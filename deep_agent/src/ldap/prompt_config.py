@@ -39,6 +39,7 @@ class PromptAccessConfig:
 
     groups: list[GroupRoleMapping] | None = None
     accessibility: str = "private"
+    service_accounts: list[str] | None = None
 
 
 _cached_config: PromptAccessConfig | None = None
@@ -81,9 +82,17 @@ def _parse_groups_from_frontmatter(path: Path) -> PromptAccessConfig:
                 )
             )
 
+    raw_sas = fm.get("service_accounts")
+    service_accounts = (
+        [str(sa).strip() for sa in raw_sas if isinstance(sa, str) and sa.strip()]
+        if isinstance(raw_sas, list)
+        else None
+    )
+
     return PromptAccessConfig(
         groups=groups if groups else None,
         accessibility=accessibility,
+        service_accounts=service_accounts if service_accounts else None,
     )
 
 

@@ -146,7 +146,7 @@ middleware:
     backoff_factor: 2.0
     initial_delay: 1.0
   model_fallback:
-    enabled: false
+    enabled: true
     fallback_model: "google_genai:gemini-2.5-flash"
     # Requires GOOGLE_API_KEY for Developer API, or matching Vertex AI config.
     # Enable when fallback model uses same auth as primary.

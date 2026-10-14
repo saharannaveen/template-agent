@@ -383,7 +383,8 @@ async def agent(runtime: ServerRuntime) -> Any:
 
     from deep_agent.aegra.webhook_invoke import get_webhook_tools
 
-    all_available_tools.extend(get_webhook_tools())
+    webhook_tools = get_webhook_tools()
+    all_available_tools.extend(webhook_tools)
 
     from deep_agent.src.capability import (
         enforce_capability,
@@ -495,6 +496,16 @@ async def agent(runtime: ServerRuntime) -> Any:
         from deep_agent.src.agent.config.resolver import to_virtual_skill_paths
 
         skills_param = to_virtual_skill_paths(skill_paths)
+        if webhook_tools:
+            from deepagents.middleware.skills import SkillsMiddleware
+
+            skill_tools_mw = SkillsMiddleware(
+                backend=backend,
+                sources=skills_param,
+                tools=webhook_tools,
+            )
+            middleware.append(skill_tools_mw)
+            skills_param = None
     else:
         skills_param = None
 

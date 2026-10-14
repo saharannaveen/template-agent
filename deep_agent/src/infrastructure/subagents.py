@@ -496,6 +496,18 @@ def _build_default_subagent(
     if skill_paths:
         subagent_params["skills"] = to_virtual_skill_paths(skill_paths)
     middleware = _subagent_middleware(name, resolved_tools, fallback_mw)
+    if middleware is None:
+        middleware = []
+
+    pinned = agent_cfg.get("pinned_skills")
+    if pinned:
+        from deep_agent.src.infrastructure.pinned_skills import (
+            PinnedSkillsMiddleware,
+        )
+
+        middleware.insert(0, PinnedSkillsMiddleware(pinned))
+        logger.info("Subagent '%s' has %d pinned skill(s)", name, len(pinned))
+
     if middleware:
         subagent_params["middleware"] = middleware
 

@@ -381,6 +381,10 @@ async def agent(runtime: ServerRuntime) -> Any:
 
     all_available_tools = list(mcp_tools)
 
+    from deep_agent.aegra.webhook_invoke import get_webhook_tools
+
+    all_available_tools.extend(get_webhook_tools())
+
     from deep_agent.src.capability import (
         enforce_capability,
         resolve_capability_manifest,

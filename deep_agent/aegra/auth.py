@@ -198,12 +198,28 @@ def _build_dev_user() -> dict[str, Any]:
 
 
 async def _resolve_ldap_role(payload: dict[str, Any]) -> str | None:
-    """Resolve the user's LDAP role from PROMPT.md groups."""
+    """Resolve the user's LDAP role from PROMPT.md groups.
+
+    Service accounts (``preferred_username`` starting with ``service-account-``)
+    are checked against the ``service_accounts`` allowlist in PROMPT.md instead
+    of LDAP.  This enables headless agent-to-agent invocation without requiring
+    SAs in Rover groups.
+    """
+    from deep_agent.src.ldap.prompt_config import get_prompt_access_config
     from deep_agent.src.ldap.service import resolve_user_role
 
     user_id = str(payload.get("preferred_username") or payload.get("sub") or "").strip()
     if not user_id:
         return "denied"
+
+    if user_id.startswith("service-account-"):
+        config = get_prompt_access_config()
+        if config.service_accounts is not None and user_id in config.service_accounts:
+            logger.info("sa_allowed_by_allowlist", user_id=user_id)
+            return None
+        logger.warning("sa_denied_not_in_allowlist", user_id=user_id)
+        return "denied"
+
     return await resolve_user_role(user_id)
 
 

@@ -643,12 +643,26 @@ def _resolve_async_headers(name: str) -> dict[str, str] | None:
     """Resolve auth headers for an async subagent from environment.
 
     Convention: ASYNC_SUBAGENT_<NAME>_TOKEN env var → Authorization header.
+    Also injects X-User-Email/X-User-Sub for agent-engine auth when
+    ASYNC_SUBAGENT_<NAME>_USER_EMAIL or default identity is available.
     Secrets come from OpenShift Secrets mounted as env vars.
     """
     import os
 
+    headers: dict[str, str] = {}
     env_key = f"ASYNC_SUBAGENT_{name.upper().replace('-', '_')}_TOKEN"
     token = os.environ.get(env_key)
     if token:
-        return {"Authorization": f"Bearer {token}"}
-    return None
+        headers["Authorization"] = f"Bearer {token}"
+
+    email_key = f"ASYNC_SUBAGENT_{name.upper().replace('-', '_')}_USER_EMAIL"
+    email = os.environ.get(email_key, os.environ.get("ASYNC_SUBAGENT_DEFAULT_EMAIL", ""))
+    if email:
+        headers["X-User-Email"] = email
+
+    sub_key = f"ASYNC_SUBAGENT_{name.upper().replace('-', '_')}_USER_SUB"
+    sub = os.environ.get(sub_key, os.environ.get("ASYNC_SUBAGENT_DEFAULT_SUB", ""))
+    if sub:
+        headers["X-User-Sub"] = sub
+
+    return headers or None
